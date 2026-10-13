@@ -599,7 +599,9 @@ pub fn parse(text: &str) -> Result<Document> {
             continue;
         };
         let tc = tc.split('.').next().unwrap_or(tc);
-        let parts: Vec<i64> = tc.split([':', ';']).filter_map(|p| p.parse().ok()).collect();
+        // fields of at most three digits, as in SCC: a corrupt timecode can't reach frame counts
+        // whose arithmetic overflows
+        let parts: Vec<i64> = tc.split([':', ';']).filter(|p| (1..=3).contains(&p.len())).filter_map(|p| p.parse().ok()).collect();
         let [h, m, s, f] = parts[..] else {
             return Err(Error::Syntax { line: n + 1, msg: format!("bad timecode \"{tc}\"") });
         };
@@ -633,10 +635,10 @@ pub fn parse(text: &str) -> Result<Document> {
         let mut last = 0;
         for (f, start, a, b) in dtv {
             d.pair(f, start, a, b);
-            last = f + 1;
+            last = f.saturating_add(1);
         }
         if let Some((s, t)) = d.open.take() {
-            d.cues.push((s, last.max(s + 1), t));
+            d.cues.push((s, last.max(s.saturating_add(1)), t));
         }
         doc.cues = d.cues.into_iter().map(|(s, e, text)| Cue { start: rate.0.tick_of(s), end: rate.0.tick_of(e), text, ..Default::default() }).collect();
     }
@@ -649,6 +651,20 @@ mod tests {
 
     fn cue(s: i64, e: i64, text: &str) -> Cue {
         Cue { start: RATE.tick_of(s), end: RATE.tick_of(e), text: text.into(), ..Default::default() }
+    }
+
+    #[test]
+    fn corrupt_timecodes_are_errors_not_overflows() {
+        // found by fuzzing: a 20-digit timecode field clamped to i64::MAX frames, and the frame
+        // after it overflowed
+        let doc = Document { cues: vec![cue(60, 120, "Hi")], ..Default::default() };
+        let text = String::from_utf8(crate::write(&doc, crate::Format::Mcc, Default::default())).unwrap();
+        let tc = text.lines().find(|l| l.starts_with(|c: char| c.is_ascii_digit())).and_then(|l| l.split(['\t', ' ']).next()).unwrap();
+        assert!(parse(&text.replacen(tc, "99999999999999999999:00:00:00", 1)).is_err());
+        assert!(parse(&text.replacen(tc, "00:00:00:9999", 1)).is_err());
+        // the decoder itself takes any frame numbers
+        let cues = scc::decode_pairs([(i64::MAX - 1, 0x94, 0x20), (i64::MAX, 0xc1, 0x80)], RATE);
+        assert!(cues.iter().all(|c| c.start <= c.end));
     }
 
     #[test]

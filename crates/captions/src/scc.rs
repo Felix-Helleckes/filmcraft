@@ -250,11 +250,11 @@ pub fn decode_pairs(pairs: impl IntoIterator<Item = (i64, u8, u8)>, rate: FrameR
     let mut last_frame = 0;
     for (f, b1, b2) in pairs {
         dec.pair(f, b1, b2);
-        last_frame = last_frame.max(f + 1);
+        last_frame = last_frame.max(f.saturating_add(1));
     }
     let one_second = rate.frame_at(Tick(filmcraft_time::TICKS_PER_SECOND)).max(1);
     if let Some((s, text)) = dec.open.take() {
-        let end = last_frame.max(s + 1) + one_second;
+        let end = last_frame.max(s.saturating_add(1)).saturating_add(one_second);
         dec.cues.push((s, end, text));
     }
     dec.cues.into_iter().map(|(s, e, text)| Cue { start: rate.tick_of(s), end: rate.tick_of(e), text, ..Default::default() }).collect()

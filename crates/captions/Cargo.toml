@@ -19,3 +19,4 @@ roxmltree = { workspace = true }
 
 [dev-dependencies]
 proptest = { workspace = true }
+filmcraft-testkit = { workspace = true }
