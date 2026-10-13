@@ -1787,6 +1787,7 @@ version = "0.7.2"
 dependencies = [
  "filmcraft-color",
  "filmcraft-project",
+ "filmcraft-testkit",
  "filmcraft-text",
  "filmcraft-time",
  "proptest",
@@ -2078,6 +2079,7 @@ dependencies = [
  "filmcraft-geom",
  "filmcraft-media",
  "filmcraft-project",
+ "filmcraft-testkit",
  "filmcraft-time",
  "proptest",
  "roxmltree",

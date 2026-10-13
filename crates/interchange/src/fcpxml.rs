@@ -45,8 +45,14 @@ fn gcd(mut a: i128, mut b: i128) -> i128 {
     a.max(1)
 }
 
-/// Parse an FCPXML time value (`"1001/24000s"`, `"5s"`, `"0s"`, `"3.5s"`) into ticks.
+/// Parse an FCPXML time value (`"1001/24000s"`, `"5s"`, `"0s"`, `"3.5s"`) into ticks. The value
+/// comes from the document: one outside the project's time range (`Tick::MIN..=Tick::MAX`) is no
+/// time, rather than an overflow or a saturated extreme.
 pub(crate) fn parse_time(s: &str) -> Option<Tick> {
+    parse_time_unbounded(s).filter(|t| (Tick::MIN..=Tick::MAX).contains(t))
+}
+
+fn parse_time_unbounded(s: &str) -> Option<Tick> {
     let s = s.trim().strip_suffix('s').unwrap_or(s.trim());
     if s.is_empty() {
         return None;
@@ -57,14 +63,15 @@ pub(crate) fn parse_time(s: &str) -> Option<Tick> {
         if b == 0 {
             return None;
         }
-        let n = a * TICKS_PER_SECOND as i128;
+        // The numbers come from the document: a time that doesn't fit in ticks is no time.
+        let n = a.checked_mul(TICKS_PER_SECOND as i128)?;
         // Exact for every broadcast rate; round to the nearest tick otherwise.
         let q = n.div_euclid(b);
         let r = n.rem_euclid(b);
-        return Some(Tick((if 2 * r >= b.abs() { q + 1 } else { q }) as i64));
+        return i64::try_from(if r >= b.abs() - r { q + 1 } else { q }).ok().map(Tick);
     }
     if let Ok(i) = s.parse::<i64>() {
-        return Some(Tick(i * TICKS_PER_SECOND));
+        return i.checked_mul(TICKS_PER_SECOND).map(Tick);
     }
     s.parse::<f64>().ok().map(Tick::from_seconds_f64)
 }
@@ -1196,5 +1203,19 @@ mod tests {
         assert_eq!(parse_time(&fmt_time(odd, r)), Some(odd));
         assert_eq!(rate_from_frame_duration("1001/30000s"), Some(FrameRate::FPS_29_97));
         assert_eq!(rate_from_frame_duration("100/2500s"), Some(FrameRate::FPS_25));
+    }
+
+    #[test]
+    fn times_beyond_the_tick_range_are_not_times() {
+        // found by fuzzing: these multiplied into an overflow panic
+        assert_eq!(parse_time("99999999999999999999s"), None);
+        assert_eq!(parse_time("9223372036854775807s"), None);
+        assert_eq!(parse_time("99999999999999999999999999999999999999/1s"), None);
+        assert_eq!(parse_time("9223372036854775807/1s"), None);
+        assert_eq!(parse_time("-9223372036854775808/1s"), None);
+        assert_eq!(parse_time("1e300s"), None);
+        let max = Tick::MAX.0 / TICKS_PER_SECOND;
+        assert_eq!(parse_time(&format!("{max}s")), Some(Tick(max * TICKS_PER_SECOND)));
+        assert_eq!(parse_time(&format!("{}s", max + 1)), None);
     }
 }

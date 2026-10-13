@@ -197,9 +197,11 @@ pub(crate) fn timebase(rate: FrameRate) -> (i64, bool) {
     (rate.timecode_base(), rate.is_ntsc())
 }
 
-/// Rate from FCP7-style `(timebase, ntsc)`.
+/// Rate from FCP7-style `(timebase, ntsc)`. The timebase comes from the document, so it is kept
+/// within the 1–1000 fps a sequence allows (`SequenceSettings::validate`): a corrupt one can't
+/// overflow here or in the frame arithmetic that follows.
 pub(crate) fn rate_from_timebase(timebase: i64, ntsc: bool) -> FrameRate {
-    let tb = timebase.max(1);
+    let tb = timebase.clamp(1, 1000);
     if ntsc { FrameRate::new(tb * 1000, 1001) } else { FrameRate::new(tb, 1) }
 }
 
@@ -708,6 +710,9 @@ mod tests {
         assert_eq!(rate_from_timebase(30, true), FrameRate::FPS_29_97);
         assert_eq!(rate_from_timebase(60, true), FrameRate::FPS_59_94);
         assert_eq!(rate_from_timebase(25, false), FrameRate::FPS_25);
+        // a corrupt timebase is clamped, not multiplied into an overflow (found by fuzzing)
+        assert_eq!(rate_from_timebase(i64::MAX, true), FrameRate::new(1_000_000, 1001));
+        assert_eq!(rate_from_timebase(-5, false), FrameRate::new(1, 1));
         assert_eq!(rate_from_f64(24000.0 / 1001.0), FrameRate::FPS_23_976);
         assert_eq!(rate_from_f64(23.976), FrameRate::FPS_23_976);
         assert_eq!(rate_from_f64(48000.0), FrameRate::new(48000, 1));
