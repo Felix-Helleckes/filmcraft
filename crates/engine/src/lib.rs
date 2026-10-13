@@ -1276,6 +1276,8 @@ mod presets_tests;
 #[cfg(test)]
 mod previews_tests;
 #[cfg(test)]
+mod project_fuzz_tests;
+#[cfg(test)]
 mod project_manager_tests;
 #[cfg(test)]
 mod project_panel_tests;
