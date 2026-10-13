@@ -21,6 +21,8 @@
 //! - `ui.screenshot {path?, panel?}`: PNG of the window (or one panel)
 //! - `ui.resize {width, height}` / `ui.focus` / `app.quit`
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::mpsc::Sender;
 
 use serde_json::{Value, json};
@@ -36,12 +38,58 @@ pub struct ControlRequest {
     pub method: String,
     pub params: Value,
     pub reply: Sender<Value>,
+    /// Shared with the transport's [`ControlTicket`]: whether the UI may still run this request.
+    state: Arc<AtomicU8>,
 }
+
+/// Queued; the UI has not run it yet (or a [`Outcome::Retry`] put it back).
+const PENDING: u8 = 0;
+/// The UI thread is inside [`handle`] for it.
+const RUNNING: u8 = 1;
+/// [`handle`] acted on it; only the reply may still be outstanding.
+const TAKEN: u8 = 2;
+/// The transport gave up waiting before the UI took it: it must never run.
+const ABANDONED: u8 = 3;
 
 impl ControlRequest {
     pub fn new(method: impl Into<String>, params: Value) -> (Self, std::sync::mpsc::Receiver<Value>) {
         let (tx, rx) = std::sync::mpsc::channel();
-        (Self { method: method.into(), params, reply: tx }, rx)
+        (Self { method: method.into(), params, reply: tx, state: Arc::new(AtomicU8::new(PENDING)) }, rx)
+    }
+
+    /// The transport's handle on this request, to cancel it if it waits too long (#1584).
+    pub fn ticket(&self) -> ControlTicket {
+        ControlTicket { state: Arc::clone(&self.state) }
+    }
+
+    /// Claim the request for one [`handle`] call. `false` when the transport has abandoned it:
+    /// the caller has given up on the reply, and running it now would apply an edit the caller
+    /// believes failed (and may retry).
+    pub fn begin(&self) -> bool {
+        self.state.compare_exchange(PENDING, RUNNING, Ordering::AcqRel, Ordering::Acquire).is_ok()
+    }
+
+    /// End a [`begin`](Self::begin): `ran` when `handle` acted on it, otherwise (a retry) it goes
+    /// back to waiting and may still be abandoned.
+    pub fn finish(&self, ran: bool) {
+        self.state.store(if ran { TAKEN } else { PENDING }, Ordering::Release);
+    }
+}
+
+/// Held by the transport while it waits for a [`ControlRequest`]'s reply.
+#[derive(Clone)]
+pub struct ControlTicket {
+    state: Arc<AtomicU8>,
+}
+
+impl ControlTicket {
+    /// Give up on the request. `true` if the UI had not run it, which now never will; `false` if it
+    /// already ran (or is running): its effect stands even though the reply is late.
+    pub fn abandon(&self) -> bool {
+        match self.state.compare_exchange(PENDING, ABANDONED, Ordering::AcqRel, Ordering::Acquire) {
+            Ok(_) => true,
+            Err(state) => state == ABANDONED,
+        }
     }
 }
 
