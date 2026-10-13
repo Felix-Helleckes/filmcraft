@@ -6,11 +6,13 @@
 //!   collision-free temporary names for concurrent generators.
 //! - [`golden`]: RGBA8 images, PNG I/O, image-difference metrics and golden-file checks
 //!   (`FILMCRAFT_BLESS=1` regenerates references).
+//! - [`fuzz`]: mutation fuzzing of parsers for untrusted files (distinct panics, saved inputs).
 //!
 //! ffmpeg/ffprobe are external test oracles and fixture generators only; they are never linked
 //! or shipped (AGENTS.md §2).
 
 pub mod fixtures;
+pub mod fuzz;
 pub mod golden;
 pub mod oracle;
 pub mod wav;
