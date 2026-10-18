@@ -2572,12 +2572,27 @@ fn interact(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, layout: &
             }
             Drag::Move { clips, grab_tick, start_track, .. } => {
                 let raw = rate.snap_nearest(t_here - grab_tick);
-                // snap the moved block's start or end
+                // snap whichever edge of the moved clips is nearest a snap point, as Premiere does:
+                // not only the block's outer start and end, so a shorter linked partner's edges
+                // snap too (#374)
                 let first = clips.iter().filter_map(|c| seq.find_item(*c).map(|(_, i)| i.start)).min().unwrap_or_default();
-                let last = clips.iter().filter_map(|c| seq.find_item(*c).map(|(_, i)| i.end())).max().unwrap_or_default();
-                let s1 = snap(app, seq, layout, first + raw, &clips) - first;
-                let offset = if s1 != raw { s1 } else { snap(app, seq, layout, last + raw, &clips) - last };
-                let offset = offset.max(-first);
+                let mut edges: Vec<Tick> = clips.iter().filter_map(|c| seq.find_item(*c)).flat_map(|(_, i)| [i.start, i.end()]).collect();
+                edges.sort_unstable();
+                edges.dedup();
+                let guide = app.tl.snap_x;
+                // (distance in px, offset, snap guide)
+                let mut best: Option<(f32, Tick, Option<f32>)> = None;
+                for e in edges {
+                    app.tl.snap_x = guide;
+                    let at = e + raw;
+                    let snapped = snap(app, seq, layout, at, &clips);
+                    let d = (layout.x_of(snapped) - layout.x_of(at)).abs();
+                    if snapped != at && best.is_none_or(|b| d < b.0) {
+                        best = Some((d, snapped - e, app.tl.snap_x));
+                    }
+                }
+                app.tl.snap_x = best.map_or(guide, |b| b.2);
+                let offset = best.map_or(raw, |b| b.1).max(-first);
                 let cur_row = layout.row_at(p.y);
                 let start_row = layout.rows.iter().find(|r| r.track == start_track);
                 let track_delta = match (cur_row, start_row) {
