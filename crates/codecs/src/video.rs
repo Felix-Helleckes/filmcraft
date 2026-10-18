@@ -1149,7 +1149,7 @@ mod disposable_tests {
     }
 }
 
-/// Uncompressed video layouts (AVI `BI_RGB` and YUV FourCCs).
+/// Uncompressed video layouts (AVI `BI_RGB` and YUV FourCCs, QuickTime `raw `, `2vuy`, `v210`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RawFormat {
     /// 24-bit B, G, R; rows padded to 4 bytes.
@@ -1168,6 +1168,13 @@ pub enum RawFormat {
     Nv12,
     /// Luma only (`Y800`, `GREY`, `Y8  `).
     Gray8,
+    /// QuickTime `raw ` at depth 24: R, G, B, top-down; rows padded to an even byte count.
+    Rgb24,
+    /// QuickTime `raw ` at depth 32: A, R, G, B, top-down.
+    Argb32,
+    /// QuickTime `v210`: 10-bit 4:2:2 Y'CbCr, six pixels in four little-endian 32-bit words, rows
+    /// padded to 128 bytes.
+    V210,
 }
 
 impl RawFormat {
@@ -1193,10 +1200,24 @@ impl RawFormat {
         })
     }
 
+    /// The layout of a QuickTime / MP4 sample entry (`raw ` with its depth, `2vuy`, `v210`).
+    pub fn from_qt(format: [u8; 4], depth: u16) -> Option<RawFormat> {
+        Some(match (&format, depth) {
+            (b"raw ", 24) => RawFormat::Rgb24,
+            (b"raw ", 32) => RawFormat::Argb32,
+            (b"2vuy", _) => RawFormat::Uyvy,
+            (b"v210", _) => RawFormat::V210,
+            _ => return None,
+        })
+    }
+
     pub fn label(self) -> &'static str {
         match self {
             RawFormat::Bgr24 => "Uncompressed RGB 24-bit",
             RawFormat::Bgrx32 => "Uncompressed RGB 32-bit",
+            RawFormat::Rgb24 => "Uncompressed RGB 24-bit",
+            RawFormat::Argb32 => "Uncompressed RGBA 32-bit",
+            RawFormat::V210 => "Uncompressed YUV 4:2:2 10-bit",
             RawFormat::Yuy2 | RawFormat::Uyvy => "Uncompressed YUV 4:2:2",
             RawFormat::I420 | RawFormat::Yv12 | RawFormat::Nv12 => "Uncompressed YUV 4:2:0",
             RawFormat::Gray8 => "Uncompressed greyscale",
@@ -1254,6 +1275,63 @@ impl RawVideoDecoder {
                 }
                 VideoFrame::rgba8(self.width, self.height, rgba)
             }
+            RawFormat::Rgb24 | RawFormat::Argb32 => {
+                let bpp = if self.format == RawFormat::Rgb24 { 3 } else { 4 };
+                let stride = qt_stride(s.len(), w * bpp, h);
+                if s.len() < stride * h {
+                    return Err(short());
+                }
+                let mut rgba = Vec::with_capacity(w * h * 4);
+                for row in s.chunks_exact(stride).take(h) {
+                    for px in row.get(..w * bpp).unwrap_or_default().chunks_exact(bpp) {
+                        rgba.extend_from_slice(&if bpp == 3 { [px[0], px[1], px[2], 255] } else { [px[1], px[2], px[3], px[0]] });
+                    }
+                }
+                VideoFrame::rgba8(self.width, self.height, rgba)
+            }
+            RawFormat::V210 => {
+                // 16 bytes carry six pixels: Cb0 Y0 Cr0 | Y1 Cb1 Y2 | Cr1 Y3 Cb2 | Y4 Cr2 Y5
+                let stride = qt_stride(s.len(), w.div_ceil(6) * 16, h);
+                if s.len() < stride * h {
+                    return Err(short());
+                }
+                let (mut y, mut u, mut v) = (Vec::with_capacity(w * h), Vec::with_capacity(cw * h), Vec::with_capacity(cw * h));
+                for row in s.chunks_exact(stride).take(h) {
+                    let (ry, ru, rv) = (y.len(), u.len(), v.len());
+                    for block in row.as_chunks::<16>().0 {
+                        let words = block.as_chunks::<4>().0;
+                        let mut vals = [0u16; 12];
+                        for (k, word) in words.iter().enumerate() {
+                            let x = u32::from_le_bytes(*word);
+                            for j in 0..3 {
+                                vals[k * 3 + j] = ((x >> (10 * j)) & 0x3ff) as u16;
+                            }
+                        }
+                        let [cb0, y0, cr0, y1, cb1, y2, cr1, y3, cb2, y4, cr2, y5] = vals;
+                        y.extend_from_slice(&[y0, y1, y2, y3, y4, y5]);
+                        u.extend_from_slice(&[cb0, cb1, cb2]);
+                        v.extend_from_slice(&[cr0, cr1, cr2]);
+                    }
+                    // the last block of a row can run past the picture
+                    y.truncate(ry + w);
+                    u.truncate(ru + cw);
+                    v.truncate(rv + cw);
+                }
+                use std::sync::Arc;
+                VideoFrame {
+                    width: self.width,
+                    height: self.height,
+                    data: filmcraft_frame::PixelData::Yuv16 {
+                        planes: [Arc::new(y), Arc::new(u), Arc::new(v)],
+                        chroma: filmcraft_frame::Chroma::C422,
+                        bits: 10,
+                        alpha: None,
+                    },
+                    color: vui_color(self.width, self.height, 2, 2, 2, false),
+                    par: (1, 1),
+                    pts: filmcraft_time::Tick::ZERO,
+                }
+            }
             RawFormat::Yuy2 | RawFormat::Uyvy => {
                 let stride = cw * 4;
                 if s.len() < stride * h {
@@ -1293,6 +1371,25 @@ impl RawVideoDecoder {
             }
         })
     }
+}
+
+/// The row stride of a QuickTime uncompressed picture of `len` bytes: rows are padded (`raw ` to an
+/// even byte count, `v210` to 128 bytes), so it is the sample size over the height when that is a
+/// whole row of at least `row` bytes, else `row` (the picture is then checked against it).
+fn qt_stride(len: usize, row: usize, h: usize) -> usize {
+    if h > 0 && len.is_multiple_of(h) && len / h >= row { len / h } else { row.max(1) }
+}
+
+/// Uncompressed QuickTime / MP4 video (`raw ` RGB at depth 24 or 32, `2vuy`, `v210`).
+pub fn raw_factory(e: &SampleEntry) -> Option<Result<Box<dyn VideoDecoder>>> {
+    if !matches!(e.codec, CodecConfig::Unknown { .. }) || !matches!(&e.format.0, b"raw " | b"2vuy" | b"v210") {
+        return None;
+    }
+    let v = e.video.as_ref()?;
+    Some(match RawFormat::from_qt(e.format.0, v.depth) {
+        Some(f) => RawVideoDecoder::new(f, v.width as u32, v.height as u32, false).map(|d| Box::new(d) as Box<dyn VideoDecoder>),
+        None => Err(CodecError::Unsupported(format!("uncompressed QuickTime video at depth {}", v.depth))),
+    })
 }
 
 impl VideoDecoder for RawVideoDecoder {

@@ -260,16 +260,24 @@ impl Mp4Source {
                 explicit_color = Some(color);
             }
             let bitrate = (t.samples.iter().map(|s| s.size as u64).sum::<u64>() * 8 * t.timescale as u64).checked_div(t.duration);
+            // uncompressed QuickTime video (#2340): the layout comes from the fourcc and the depth
+            let raw = matches!(entry.codec, CodecConfig::Unknown { .. }).then(|| crate::video::RawFormat::from_qt(entry.format.0, vp.depth)).flatten();
             let mut info = VideoStreamInfo {
                 width: w,
                 height: h,
                 frame_rate: rate,
                 par: vp.pixel_aspect.unwrap_or((1, 1)),
-                codec: codec_label(&entry.codec),
-                pixel_format: pixfmt_label(&entry.codec),
+                codec: raw.map_or_else(|| codec_label(&entry.codec), |f| f.label().into()),
+                pixel_format: match raw {
+                    Some(crate::video::RawFormat::Rgb24) => "RGB 8-bit".into(),
+                    Some(crate::video::RawFormat::Argb32) => "RGBA 8-bit".into(),
+                    Some(crate::video::RawFormat::V210) => "YUV 4:2:2 10-bit".into(),
+                    Some(_) => "YUV 4:2:2 8-bit".into(),
+                    None => pixfmt_label(&entry.codec),
+                },
                 color,
                 // ProRes 4444 alpha comes from its first frame header (`open_reader`)
-                has_alpha: matches!(&entry.codec, CodecConfig::Apv(a) if a.chroma_format_idc == 4),
+                has_alpha: matches!(&entry.codec, CodecConfig::Apv(a) if a.chroma_format_idc == 4) || raw == Some(crate::video::RawFormat::Argb32),
                 bitrate,
                 hdr: entry.video.as_ref().and_then(|v| hdr_metadata(v.mastering_display.as_ref(), v.content_light)),
             };

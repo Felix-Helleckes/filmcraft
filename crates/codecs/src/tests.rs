@@ -186,6 +186,62 @@ fn dnxhd_and_dnxhr_movs_decode() {
     }
 }
 
+/// #2340: uncompressed QuickTime video (`raw ` RGB at depth 24 and 32, `2vuy`, `v210`) decodes
+/// bit-exact with ffmpeg, odd sizes included (`raw ` rows are padded to an even byte count, `v210`
+/// rows to 128 bytes), and is labelled as uncompressed.
+#[test]
+fn uncompressed_quicktime_video_is_bit_exact() {
+    for (name, size, pix, codec, label, reference_fmt) in [
+        ("raw_rgb24.mov", "161x9", "rgb24", "rawvideo", "Uncompressed RGB 24-bit", "rgba"),
+        ("raw_argb.mov", "161x9", "argb", "rawvideo", "Uncompressed RGBA 32-bit", "rgba"),
+        ("raw_2vuy.mov", "161x9", "uyvy422", "rawvideo", "Uncompressed YUV 4:2:2", "yuv422p"),
+        ("raw_v210.mov", "170x9", "yuv422p10le", "v210", "Uncompressed YUV 4:2:2 10-bit", "yuv422p10le"),
+    ] {
+        let scale = format!("scale={}", size.replace('x', ":"));
+        // with 32-bit float PCM in a version 1 sound description (`fl32`), as the report's files carry
+        let args = [
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=s=176x16:r=25:d=0.2",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:sample_rate=48000:d=0.2",
+            "-vf",
+            &scale,
+            "-pix_fmt",
+            pix,
+            "-c:v",
+            codec,
+            "-ac",
+            "2",
+            "-c:a",
+            "pcm_f32be",
+        ];
+        let Some(path) = fixture_path(name, &args) else { return };
+        let src = crate::open_bytes(name, std::fs::read(&path).unwrap().into()).unwrap_or_else(|e| panic!("{name}: {e}"));
+        let v = src.info().video.clone().unwrap();
+        assert_eq!((format!("{}x{}", v.width, v.height), v.codec.as_str()), (size.to_string(), label), "{name}");
+        let a = &src.info().audio_streams[0];
+        assert_eq!((a.sample_rate, a.channels, a.codec.as_str()), (48_000, 2, "PCM 32-bit float"), "{name}");
+        // the samples are ffmpeg's, exactly
+        let ours = src.audio(0, 4_800, 48_000).unwrap().channels[0].clone();
+        let out =
+            std::process::Command::new(ffmpeg().unwrap()).args(["-v", "error", "-i"]).arg(&path).args(["-map", "0:a:0", "-f", "f32le", "-"]).output().unwrap();
+        let theirs: Vec<f32> = out.stdout.as_chunks::<4>().0.iter().step_by(2).take(4_800).map(|b| f32::from_le_bytes(*b)).collect();
+        assert!(ours == theirs, "{name}: fl32 audio differs from ffmpeg");
+        let reference = reference_yuv(&path, reference_fmt).unwrap();
+        let frame = reference.len() / 5;
+        let rate = src.info().frame_rate();
+        for k in [3, 0, 4] {
+            let f = src.video_frame(FrameRequest::full(rate.tick_of(k as i64))).unwrap();
+            let got = if reference_fmt == "rgba" { f.to_rgba8() } else { yuv_bytes(&f) };
+            assert!(got == reference[k * frame..(k + 1) * frame], "{name}: frame {k} differs from ffmpeg");
+        }
+    }
+}
+
 /// Solid-colour Matroska fixtures: decoded frames must match the colour, audio must be a 1 kHz tone.
 fn check_mkv(name: &str, vcodec: &[&str], acodec: &[&str]) {
     let mut args: Vec<&str> =

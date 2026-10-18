@@ -182,7 +182,7 @@ No FFmpeg inside. The video codecs, AAC, Opus and the containers are our own Rus
 | **Avid DNxHD / DNxHR** | ✓ | ✓ | All SMPTE ST 2019-1 CIDs (LB to 444, 8/10/12-bit); export writes DNxHR in MOV |
 | **MJPEG, PCM** | ✓ | ✓ | |
 | **MP3, FLAC, ALAC, Vorbis** | ✓ | | Via the [symphonia](https://github.com/pdeljanov/Symphonia) crate (MPL-2.0) for now, to be replaced by our own |
-| **MP4 / MOV** | ✓ | ✓ | Fragmented MP4, edit lists, timecode tracks |
+| **MP4 / MOV** | ✓ | ✓ | Fragmented MP4, edit lists, timecode tracks; uncompressed QuickTime video (`raw ` RGB, `2vuy`, `v210`) |
 | **Matroska / WebM** | ✓ | | Lacing, Cues, header stripping, HDR colour metadata |
 | **AVI** | ✓ | | AVI 1.0 and OpenDML (files past 1 GB); Motion JPEG, H.264, HEVC and uncompressed RGB / YUV with PCM, MP3, MP2 or AC-3. DivX / Xvid and DV not yet |
 | **Stills** | ✓ | ✓ | Import PNG, JPEG, GIF, WebP, TIFF and BMP (animated GIF and APNG as clips, with transparency); export PNG sequences and animated GIF |
