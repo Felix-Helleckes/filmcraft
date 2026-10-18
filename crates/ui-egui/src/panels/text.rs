@@ -547,7 +547,9 @@ fn style_strip(app: &mut FilmcraftApp, ui: &mut egui::Ui, r: Rect, track_idx: us
             let resp = ui.add(crate::widgets::number_drag(&mut margin).range(0.0..=45.0).speed(0.25).suffix(" %")).on_hover_text(tl!("Vertical Margin"));
             app.auto.add("text.captions.style.margin", resp.rect, "Caption margin");
             let escaped = resp.drag_stopped() && ui.input(|i| i.key_pressed(egui::Key::Escape));
-            if !escaped && (resp.drag_stopped() || (resp.changed() && !resp.dragged())) {
+            // a drag that ends where it started makes no undo step
+            let moved = (margin / 100.0 - st.margin).abs() > 1e-6;
+            if !escaped && moved && (resp.drag_stopped() || (resp.changed() && !resp.dragged())) {
                 actions.push(("captions.setStyle".into(), json!({"track": tr.id.0, "margin": margin / 100.0})));
             }
         })

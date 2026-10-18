@@ -122,4 +122,15 @@ fn caption_margin_field_sets_the_track_margin() {
     d.ok("ui.key", json!({"key": "Enter"}));
     d.frames(3);
     assert!((margin(&mut d) - 0.20).abs() < 1e-4, "{}", margin(&mut d));
+    // typing the same value again adds no undo step
+    let undo = |d: &mut Driver| d.harness.state().session.history.undo.len();
+    let n = undo(&mut d);
+    d.ok("ui.click", json!({"id": "text.captions.style.margin"}));
+    d.frames(1);
+    d.ok("ui.key", json!({"key": "Cmd+A"}));
+    d.ok("ui.type", json!({"text": "20"}));
+    d.frames(1);
+    d.ok("ui.key", json!({"key": "Enter"}));
+    d.frames(3);
+    assert_eq!(undo(&mut d), n, "no undo step for an unchanged margin");
 }
