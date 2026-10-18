@@ -134,6 +134,39 @@ fn audio_source_outputs_sound_and_uses_the_device_clock() {
     h.state_mut().stop_source();
 }
 
+/// #1789: L / L-L in the Source monitor plays sound at 2× and 4×, as the Program monitor does,
+/// with and without Maintain Pitch While Shuttling; reverse stays silent.
+#[test]
+fn source_shuttle_forward_plays_sound() {
+    for (speed, maintain) in [(2.0, true), (4.0, false)] {
+        let fill = Arc::new(Mutex::new(None));
+        let mut app = app(11);
+        app.session.prefs.audio.maintain_pitch_shuttling = maintain;
+        app.audio = Some(Box::new(Out { frames: Arc::new(AtomicU64::new(0)), fill: fill.clone(), stalled: false }));
+        let mut h = Harness::builder().with_step_dt(0.25).with_size(egui::vec2(1280.0, 800.0)).build_eframe(move |_cc| app);
+        h.step();
+        h.state_mut().shuttle_source(speed).unwrap();
+        for _ in 0..4 {
+            h.step();
+        }
+        assert!(h.state().source_playback.clock.audio_clock, "{speed}× plays through the audio device");
+        let mut heard = false;
+        for _ in 0..200 {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            let mut buffer = vec![0.0; 960];
+            if let Some(f) = fill.lock().unwrap().as_mut() {
+                f(&mut buffer, 2);
+            }
+            heard |= buffer.iter().any(|x| x.abs() > 0.001);
+            if heard {
+                break;
+            }
+        }
+        assert!(heard, "{speed}× (maintain pitch {maintain}) must produce non-silent source samples");
+        h.state_mut().stop_source();
+    }
+}
+
 #[test]
 fn stalled_source_audio_falls_back_to_wall_clock() {
     let mut app = app(11);
