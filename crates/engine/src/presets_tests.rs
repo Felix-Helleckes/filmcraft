@@ -257,3 +257,44 @@ fn export_and_import_go_through_host_services() {
     assert_eq!(s2.presets.user.len(), 1);
     assert!(s2.execute("presets.import", json!({"path": "/exports/missing.prfpset"})).is_err());
 }
+
+/// Every effect preset is a bindable command, `presets.apply.<name>` (#1356): listed in Keyboard
+/// Shortcuts under Presets, assignable a key, applying the preset to the selected clips in
+/// one undo step; a deleted preset takes its command with it.
+#[test]
+fn every_preset_is_a_shortcut_command() {
+    use crate::presets::command_key;
+    assert_eq!(command_key("Blur In (Short)"), "blur-in-short");
+    assert_eq!(command_key("  Glow--Pop!  "), "glow-pop");
+    assert_eq!(command_key("???"), "");
+    let (mut s, clips) = demo();
+    let ids = |s: &mut Session, q: &str| -> Vec<String> {
+        let r = s.execute("shortcuts.list", json!({"query": q})).unwrap();
+        r["commands"].as_array().or_else(|| r.as_array()).unwrap().iter().filter_map(|c| c["id"].as_str().map(str::to_string)).collect()
+    };
+    // the built-in presets are there from the start
+    let builtin = crate::presets::builtin_presets().into_iter().next().unwrap().name;
+    let builtin_id = format!("presets.apply.{}", command_key(&builtin));
+    assert!(ids(&mut s, &builtin).contains(&builtin_id), "{builtin_id}");
+    // a saved preset adds its command
+    s.state.selection = vec![clips[0]];
+    s.execute("effects.apply", json!({"effect": "gaussian_blur"})).unwrap();
+    let bi = item(&s, clips[0]).effects.iter().position(|e| e.effect == "gaussian_blur").unwrap();
+    s.execute("presets.save", json!({"clip": clips[0].0, "name": "Soft Glow!", "effects": [bi]})).unwrap();
+    assert!(ids(&mut s, "Soft Glow").contains(&"presets.apply.soft-glow".to_string()));
+    let info = s.shortcuts.command("presets.apply.soft-glow").unwrap();
+    assert_eq!((info.label.as_str(), info.category.as_str()), ("Soft Glow!", "Presets"));
+    s.execute("shortcuts.set", json!({"command": "presets.apply.soft-glow", "keys": "Ctrl+Alt+G"})).unwrap();
+    // the command applies the preset to the selected clips, one undo step
+    let target = clips[2];
+    s.state.selection = vec![target];
+    let before = item(&s, target).effects.iter().filter(|e| e.effect == "gaussian_blur").count();
+    let undo = s.history.undo.len();
+    s.execute("presets.apply.soft-glow", json!({})).unwrap();
+    assert_eq!(item(&s, target).effects.iter().filter(|e| e.effect == "gaussian_blur").count(), before + 1);
+    assert_eq!(s.history.undo.len(), undo + 1);
+    // deleting the preset removes the command
+    s.execute("presets.delete", json!({"name": "Soft Glow!"})).unwrap();
+    assert!(!ids(&mut s, "Soft Glow").contains(&"presets.apply.soft-glow".to_string()));
+    assert!(s.execute("presets.apply.soft-glow", json!({})).is_err());
+}

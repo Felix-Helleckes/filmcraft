@@ -195,6 +195,51 @@ fn preset(name: &str, description: &str, keyframes: KeyframeMode, secs: f64, eff
 }
 
 /// Presets that ship with FilmCraft (original work: parameter values chosen by us).
+/// Command ids for applying a preset from a shortcut: `presets.apply.<name>`, the name lower-cased
+/// with every run of other characters as one `-` (`Blur In (Short)` → `presets.apply.blur-in-short`).
+pub const APPLY_PREFIX: &str = "presets.apply.";
+
+/// The key of a preset name in its command id.
+pub fn command_key(name: &str) -> String {
+    let mut out = String::new();
+    for c in name.trim().chars().flat_map(char::to_lowercase) {
+        if c.is_alphanumeric() {
+            out.push(c);
+        } else if !out.ends_with('-') {
+            out.push('-');
+        }
+    }
+    out.trim_matches('-').to_string()
+}
+
+/// One bindable command per preset (#1356), listed in Keyboard Shortcuts under "Presets" by the
+/// preset's name (the built-in names are translated like every label there),
+/// so a key or a hardware controller can apply a preset to the selected clips. Two presets whose
+/// names give the same key share it; the first (built-in presets first) is the one it applies.
+pub fn shortcut_commands(lib: &PresetLibrary) -> Vec<crate::shortcuts::CommandInfo> {
+    let mut out: Vec<crate::shortcuts::CommandInfo> = Vec::new();
+    for p in lib.all() {
+        let key = command_key(&p.name);
+        if key.is_empty() {
+            continue;
+        }
+        let id = format!("{APPLY_PREFIX}{key}");
+        if out.iter().any(|c| c.id == id) {
+            continue;
+        }
+        let mut c = crate::shortcuts::CommandInfo::new(&id, &p.name, &[], None);
+        c.category = "Presets".into();
+        out.push(c);
+    }
+    out
+}
+
+/// The preset a `presets.apply.<name>` command applies.
+pub fn preset_for_command(lib: &PresetLibrary, id: &str) -> Option<String> {
+    let key = id.strip_prefix(APPLY_PREFIX)?;
+    lib.all().into_iter().find(|p| command_key(&p.name) == key).map(|p| p.name)
+}
+
 pub fn builtin_presets() -> Vec<EffectPreset> {
     let f = ParamValue::Float;
     let mut blur_in = effect("gaussian_blur", &[]);
