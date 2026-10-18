@@ -150,6 +150,36 @@ fn export_wav_waits_for_job() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// `file.exportMedia` without `wait` starts a background job; `run` and `exec` must not exit before
+/// it has written the file (#2342: the script reported success and no file appeared).
+#[test]
+fn run_and_exec_wait_for_background_exports() {
+    let dir = std::env::temp_dir().join(format!("fc-cli-bg-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let ran = dir.join("ran.wav");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_filmcraft-cli"))
+        .args(["--demo", "run", "-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let script = format!("{}\n", serde_json::json!({"id": "file.exportMedia", "params": {"path": ran.to_str().unwrap(), "format": "wav"}}));
+    child.stdin.take().unwrap().write_all(script.as_bytes()).unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let line: Value = serde_json::from_slice(out.stdout.split(|b| *b == b'\n').next().unwrap()).unwrap();
+    assert_eq!(line["ok"], true, "{line}");
+    assert!(line["result"]["job"].is_u64(), "the export ran as a background job: {line}");
+    assert!(std::fs::metadata(&ran).map(|m| m.len() > 44).unwrap_or(false), "run exited before the export was written");
+
+    let execd = dir.join("exec.wav");
+    let o = cli(&["--demo", "exec", "file.exportMedia", &format!("path={}", execd.to_str().unwrap()), "format=wav"]);
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    assert!(std::fs::metadata(&execd).map(|m| m.len() > 44).unwrap_or(false), "exec exited before the export was written");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// `export --preset`: a built-in preset by name (dash or en dash), a custom range, a user preset
 /// from `--data-dir`, `--list-presets`, `--queue`, and a clean failure for an unknown preset.
 #[test]

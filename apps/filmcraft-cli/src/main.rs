@@ -177,8 +177,54 @@ impl Backend {
         }
     }
 
-    /// Save to the --project path (`--save`) or to `--save-as`. Bridge mode saves in the app.
+    /// Block until the background jobs the commands started (an export without `wait`, the export
+    /// queue, proxies, previews, …) have finished, and apply their results to the session. They run
+    /// on threads of this process, so exiting first loses their output: a script whose last line
+    /// was `file.exportMedia` reported success and wrote no file (#2342). Returns how many of the
+    /// jobs that were still running failed; each is reported on stderr. Bridge mode: the jobs
+    /// belong to the app, which outlives this process.
+    fn wait_jobs(&mut self) -> usize {
+        let Backend::Local(s) = self else { return 0 };
+        let finished = |j: &filmcraft_engine::Job| j.result.lock().unwrap_or_else(std::sync::PoisonError::into_inner).is_some();
+        let done_before: std::collections::HashSet<u64> = s.jobs.iter().filter(|j| finished(j)).map(|j| j.id).collect();
+        let mut announced = false;
+        loop {
+            // settles the export queue and starts its next item, then applies finished proxy /
+            // mask / scene jobs
+            let queue_busy = s.pump_jobs(std::time::Duration::from_millis(50));
+            s.poll_persistence();
+            let running: Vec<&str> = s.jobs.iter().filter(|j| !finished(j)).map(|j| j.label.as_str()).collect();
+            if running.is_empty() && !queue_busy && !s.export_queue.is_active() {
+                break;
+            }
+            if !announced {
+                announced = true;
+                diag(format_args!("filmcraft-cli: waiting for background jobs: {}", running.join(", ")));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        let mut failed = 0;
+        for j in s.jobs.iter().filter(|j| !done_before.contains(&j.id)) {
+            let result = j.result.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
+            if let Some(Err(e)) = result {
+                diag(format_args!("filmcraft-cli: {} failed: {e}", j.label));
+                failed += 1;
+            }
+        }
+        failed
+    }
+
+    /// Wait for background jobs ([`Backend::wait_jobs`]), then save to the --project path
+    /// (`--save`) or to `--save-as`. Bridge mode saves in the app. Exits 1 when a job failed.
     async fn finish(&mut self, a: &Args) {
+        let failed_jobs = self.wait_jobs();
+        self.save(a).await;
+        if failed_jobs > 0 {
+            std::process::exit(1);
+        }
+    }
+
+    async fn save(&mut self, a: &Args) {
         let r = if let Some(p) = a.opt("--save-as") {
             Some(self.exec("file.saveAs", json!({"path": p})).await)
         } else if a.flag("--save") {
@@ -362,6 +408,8 @@ async fn cli() {
                         outln!("{}", json!({"line": n + 1, "id": id, "ok": false, "error": e}));
                         failed += 1;
                         if !a.flag("--keep-going") {
+                            // jobs the earlier lines started still finish (and report)
+                            b.wait_jobs();
                             std::process::exit(1);
                         }
                     }
