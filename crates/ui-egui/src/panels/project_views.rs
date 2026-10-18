@@ -227,8 +227,20 @@ pub fn item_interactions(
     }
 }
 
+/// The items a Project panel context-menu command acts on: the whole selection when the
+/// right-clicked item is part of it, else that item alone.
+fn menu_items(selection: &[ItemId], clicked: ItemId) -> Vec<u64> {
+    if selection.contains(&clicked) { selection.iter().map(|i| i.0).collect() } else { vec![clicked.0] }
+}
+
 fn item_menu(app: &mut FilmcraftApp, ui: &mut egui::Ui, id: ItemId, kind: &ItemKind, actions: &mut Actions) {
-    let sel = || json!({"items": [id.0]});
+    // Like Premiere: a right-click on one of several selected items acts on all of them (Create
+    // Proxies on a multi-selection made a proxy for the clicked clip only, #2352); a right-click
+    // outside the selection acts on that item alone. Commands that edit one item (rename, poster
+    // frame, subclips, attach) keep using `one`.
+    let group = menu_items(&app.session.state.project_selection, id);
+    let sel = || json!({"items": group});
+    let one = || json!({"items": [id.0]});
     if ui.button(tl!("Rename")).clicked() {
         actions.push(("projectPanel.rename".into(), json!({"item": id.0})));
         ui.close();
@@ -253,12 +265,12 @@ fn item_menu(app: &mut FilmcraftApp, ui: &mut egui::Ui, id: ItemId, kind: &ItemK
     if ui.button(tl!("Set Poster Frame")).clicked() {
         // the hover-scrubbed time when there is one
         let h = app.ui.project_panel.hover.filter(|h| h.item == id.0);
-        actions.push(("project.select".into(), sel()));
+        actions.push(("project.select".into(), one()));
         actions.push(("clip.setPosterFrame".into(), h.map(|h| json!({"item": id.0, "time": h.time})).unwrap_or(json!({}))));
         ui.close();
     }
     if ui.button(tl!("Interpret Footage…")).clicked() {
-        actions.push(("clip.interpretFootage".into(), json!({"items": [id.0]})));
+        actions.push(("clip.interpretFootage".into(), sel()));
         ui.close();
     }
     // subclips: Make Subclip (media), Edit Subclip and Convert to Master Clip (subclips)
@@ -273,7 +285,7 @@ fn item_menu(app: &mut FilmcraftApp, ui: &mut egui::Ui, id: ItemId, kind: &ItemK
         let b = ui.button(*label);
         app.auto.add(&format!("project.itemMenu.{key}"), b.rect, label);
         if b.clicked() {
-            actions.push(("project.select".into(), sel()));
+            actions.push(("project.select".into(), one()));
             let p = if *key == "convertToMaster" { json!({"item": id.0, "convertToMaster": true}) } else { json!({}) };
             actions.push((cmd.to_string(), p));
             ui.close();
@@ -284,7 +296,7 @@ fn item_menu(app: &mut FilmcraftApp, ui: &mut egui::Ui, id: ItemId, kind: &ItemK
         let labels = app.session.prefs.labels.clone();
         for l in filmcraft_project::Label::ALL {
             if crate::menus::label_choice(ui, &mut app.auto, &labels, l, "project.itemMenu.label").clicked() {
-                actions.push(("project.select".into(), json!({"items": [id.0]})));
+                actions.push(("project.select".into(), sel()));
                 actions.push(("edit.label".into(), json!({"label": l.name()})));
                 ui.close();
             }
@@ -307,20 +319,25 @@ fn item_menu(app: &mut FilmcraftApp, ui: &mut egui::Ui, id: ItemId, kind: &ItemK
                 ui.close();
             }
         }
-        ui.menu_button(tl!("Proxy"), |ui| {
-            for (label, cmd) in [
-                (tl!("Create Proxies…"), "media.createProxies"),
-                (tl!("Attach Proxies…"), "media.attachProxies"),
-                (tl!("Reconnect Full Resolution Media…"), "media.reconnectFullRes"),
-                (tl!("Detach Proxies"), "media.detachProxies"),
+        let r = ui.menu_button(tl!("Proxy"), |ui| {
+            // Create and Detach work on every selected clip; Attach and Reconnect pick one file
+            // for one clip
+            for (key, label, cmd, many) in [
+                ("create", tl!("Create Proxies…"), "media.createProxies", true),
+                ("attach", tl!("Attach Proxies…"), "media.attachProxies", false),
+                ("reconnect", tl!("Reconnect Full Resolution Media…"), "media.reconnectFullRes", false),
+                ("detach", tl!("Detach Proxies"), "media.detachProxies", true),
             ] {
-                if ui.button(label).clicked() {
-                    actions.push(("project.select".into(), json!({"items": [id.0]})));
+                let b = ui.button(label);
+                app.auto.add(&format!("project.itemMenu.proxy.{key}"), b.rect, label);
+                if b.clicked() {
+                    actions.push(("project.select".into(), if many { sel() } else { one() }));
                     actions.push((cmd.into(), json!({})));
                     ui.close();
                 }
             }
         });
+        app.auto.add("project.itemMenu.proxy", r.response.rect, tl!("Proxy"));
     }
     ui.separator();
     if ui.button(tl!("Clear")).clicked() {

@@ -1128,3 +1128,39 @@ fn escape_takes_back_a_media_browser_drag() {
     assert_eq!(d.app().session.project.to_json(), before, "nothing was placed on the Timeline");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A right-click on one of several selected clips acts on all of them, as in Premiere: Proxy ▸
+/// Create Proxies… made a proxy for the clicked clip only (#2352). A right-click on a clip
+/// outside the selection acts on that clip alone.
+#[test]
+fn the_item_menu_acts_on_the_whole_selection() {
+    let dir = media_dir("item-menu");
+    let paths: Vec<String> = ["a-interview.wav", "b-roll.wav", "Selects/pick.wav"].iter().map(|n| dir.join(n).to_string_lossy().into_owned()).collect();
+    let mut d = project_driver();
+    d.exec("project.view.set", json!({"view": "list"}));
+    let r = d.exec("file.import", json!({"paths": paths}));
+    let files: Vec<u64> = r["items"].as_array().unwrap().iter().map(|v| v.as_u64().unwrap()).collect();
+    assert_eq!(files.len(), 3, "{r}");
+    d.wait_for(&format!("project.item.{}", files[2]));
+    let menu = |d: &mut Driver, item: u64| {
+        d.ok("ui.click", json!({"id": format!("project.item.{item}"), "button": "right"}));
+        d.frames(3);
+        d.click("project.itemMenu.proxy");
+        d.frames(2);
+        d.click("project.itemMenu.proxy.create");
+        d.frames(2);
+        let draft = d.app().ui.create_proxies.take().expect("the Create Proxies dialog opened");
+        let mut got = draft.items;
+        got.sort_unstable();
+        got
+    };
+    let mut two = vec![files[0], files[1]];
+    two.sort_unstable();
+    d.exec("project.select", json!({"items": two}));
+    d.frames(2);
+    assert_eq!(menu(&mut d, files[1]), two, "both selected clips are proxied");
+    let sel: Vec<u64> = d.app().session.state.project_selection.iter().map(|i| i.0).collect();
+    assert_eq!(sel.len(), 2, "the selection stays: {sel:?}");
+    assert_eq!(menu(&mut d, files[2]), vec![files[2]], "a clip outside the selection alone");
+    let _ = std::fs::remove_dir_all(&dir);
+}
