@@ -112,3 +112,29 @@ fn the_bottom_edge_of_the_last_audio_track_resizes_the_audio_tracks_from_either_
     d.drag(&id, 0.1, -15.0);
     assert!(d.heights().1 < a1 - 5.0);
 }
+
+/// #2046: over the track headers, Shift + wheel resizes every track and Option + wheel the tracks of
+/// the kind under the pointer; over the clips the same wheel still scrolls or zooms the Timeline.
+#[test]
+fn wheel_over_track_headers_changes_track_heights() {
+    let mut d = Driver::demo();
+    d.ok("ui.set", json!({"timeline": {"videoTrackHeight": 60.0, "audioTrackHeight": 60.0}}));
+    d.frames(3);
+    let wheel = |d: &mut Driver, id: &str, dy: f64, m: Value| {
+        d.ok("ui.scroll", json!({"id": id, "dy": dy, "modifiers": m}));
+        d.frames(2);
+    };
+    // Option over V1's header: video tracks only
+    wheel(&mut d, "timeline.track.V1.target", 40.0, json!({"alt": true}));
+    let (v, a) = d.heights();
+    assert!(v > 60.0 && a == 60.0, "{v} {a}");
+    // Shift over A1's header: every track
+    wheel(&mut d, "timeline.track.A1.target", -40.0, json!({"shift": true}));
+    let (v2, a2) = d.heights();
+    assert!(v2 < v && a2 < 60.0, "{v2} {a2}");
+    // over the clips Option + wheel zooms time, as before
+    let pps = d.app().ui.timeline.target_pps;
+    wheel(&mut d, "timeline.tracks", 40.0, json!({"alt": true}));
+    assert_eq!(d.heights(), (v2, a2));
+    assert!(d.app().ui.timeline.target_pps != pps);
+}

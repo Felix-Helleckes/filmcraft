@@ -2248,11 +2248,34 @@ fn interact(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, layout: &
     //   Option + wheel   zoom about the pointer
     // Settings ▸ Timeline ▸ Timeline Mouse Scrolling "Horizontal" swaps the first two. A sideways
     // gesture (trackpad swipe, tilt wheel, Shift + wheel) always scrolls sideways; a pinch zooms.
+    // Over the track headers, Shift + wheel makes every track taller or shorter and Option + wheel
+    // the tracks of the kind under the pointer (heights are per kind) (#2046).
     if ui.rect_contains_pointer(rect)
         && let Some(p) = ctx.pointer_hover_pos()
     {
         let w = wheel_input(&ctx);
-        if (w.pinch - 1.0).abs() > 1e-4 || (w.alt && w.delta.y != 0.0) {
+        let header_row = (p.x < layout.content.min.x).then(|| layout.row_at(p.y)).flatten().map(|r| r.kind);
+        // a platform may turn Shift + wheel into a sideways wheel
+        let header_dy = if w.delta.y != 0.0 {
+            w.delta.y
+        } else if w.shift {
+            w.delta.x
+        } else {
+            0.0
+        };
+        if let Some(kind) = header_row
+            && (w.alt || w.shift)
+            && header_dy != 0.0
+        {
+            let f = (1.0 + header_dy * 0.01).clamp(0.5, 2.0);
+            let v = &mut app.ui.timeline;
+            if w.shift || kind == TrackKind::Video {
+                v.video_track_h = (v.video_track_h * f).clamp(22.0, 220.0);
+            }
+            if w.shift || kind == TrackKind::Audio {
+                v.audio_track_h = (v.audio_track_h * f).clamp(22.0, 220.0);
+            }
+        } else if (w.pinch - 1.0).abs() > 1e-4 || (w.alt && w.delta.y != 0.0) {
             let f = if (w.pinch - 1.0).abs() > 1e-4 { w.pinch as f64 } else { (1.0_f64 + w.delta.y as f64 * 0.01).clamp(0.5, 2.0) };
             let anchor_t = layout.tick_at(p.x).seconds();
             let v = &mut app.ui.timeline;
