@@ -224,6 +224,24 @@ fn previews_survive_save_and_open() {
     let _ = std::fs::remove_dir_all(&folder);
 }
 
+/// Saving a project that has no previews leaves no empty `FilmCraft Previews/<name>/` beside it;
+/// the folder appears when the first preview is rendered (#2343).
+#[test]
+fn saving_without_previews_makes_no_preview_folder() {
+    let (mut s, _) = session("no-folder");
+    let folder = tmp("no-folder-project");
+    std::fs::create_dir_all(&folder).unwrap();
+    let path = folder.join("Film.fcproj").to_string_lossy().to_string();
+    s.execute("file.save", json!({"path": path})).unwrap();
+    let previews = folder.join("FilmCraft Previews");
+    assert_eq!(s.previews.dir().unwrap(), previews.join("Film"), "the store still points next to the project");
+    assert!(!previews.exists(), "no empty preview folder after a save");
+    let v = s.execute("sequence.renderEffectsInToOut", json!({"wait": true})).unwrap();
+    job_ok(&s, &v);
+    assert!(std::fs::read_dir(previews.join("Film")).unwrap().next().is_some(), "rendering creates the folder and fills it");
+    let _ = std::fs::remove_dir_all(&folder);
+}
+
 #[test]
 fn render_selection_and_audio_previews() {
     let (mut s, a) = session("sel");

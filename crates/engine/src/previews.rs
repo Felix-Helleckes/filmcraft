@@ -225,8 +225,12 @@ impl PreviewStore {
         if old.as_deref() == Some(dir.as_path()) {
             return;
         }
+        // The folder is made only when there are files to move: rendering creates it when it
+        // writes the first preview, so saving a project without previews leaves no empty
+        // `FilmCraft Previews/<name>/` beside it (#2343).
         if let Some(old) = &old
             && (old.starts_with(crate::temp_dir()) || self.temp_root().is_some_and(|r| old.starts_with(r)))
+            && !self.files.read().unwrap_or_else(|e| e.into_inner()).is_empty()
         {
             let _ = std::fs::create_dir_all(&dir);
             for name in self.files.read().unwrap_or_else(|e| e.into_inner()).iter() {
