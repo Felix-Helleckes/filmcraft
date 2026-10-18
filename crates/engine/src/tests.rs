@@ -992,6 +992,60 @@ fn transitions_select_and_delete() {
     assert!(s.execute("sequence.removeTransition", json!({})).is_err(), "nothing given or selected");
 }
 
+/// #2350: Copy with a transition selected and Paste puts the same transition (type, duration,
+/// direction, settings) at the edit at the playhead, or at the selected clips' edges; one undo
+/// step, the pasted transition selected. Copying clips again pastes clips.
+#[test]
+fn copy_and_paste_a_transition() {
+    let mut s = demo();
+    let rate = s.sequence_rate();
+    let cut = s.active_sequence().unwrap().video_tracks[0].items[2].start;
+    s.execute("playhead.set", json!({"time": cut.0})).unwrap();
+    let r =
+        s.execute("sequence.applyVideoTransition", json!({"effect": "Iris Round", "frames": 12, "params": {"border_width": 12.0}, "reverse": true})).unwrap();
+    let src = r["transition"].as_u64().unwrap();
+    let all = |s: &Session| s.active_sequence().unwrap().video_tracks[0].transitions.clone();
+    let source = all(&s).into_iter().find(|t| t.id.0 == src).unwrap();
+    assert!(s.execute("edit.paste", json!({})).is_err(), "nothing copied yet");
+    s.execute("timeline.select", json!({"transitions": [src]})).unwrap();
+    let r = s.execute("edit.copy", json!({})).unwrap();
+    assert_eq!(r["transitions"], 1, "{r}");
+    // paste at the next edit on the track
+    let next = s.active_sequence().unwrap().video_tracks[0].items[3].start;
+    s.execute("playhead.set", json!({"time": next.0})).unwrap();
+    let before = transition_ids(&s);
+    let n_undo = s.history.undo.len();
+    let r = s.execute("edit.paste", json!({})).unwrap();
+    let pasted = r["transitions"][0].as_u64().unwrap();
+    let t = all(&s).into_iter().find(|t| t.id.0 == pasted).unwrap();
+    assert_eq!((t.effect.effect.as_str(), t.duration, t.reverse), ("iris_round", rate.tick_of(12), true));
+    // (Debug, because an unset centre is NaN, which never equals itself)
+    assert_eq!(format!("{:?}", t.effect.params), format!("{:?}", source.effect.params), "its settings came along");
+    assert!(t.start <= next && t.end() >= next, "at the edit at the playhead");
+    assert_eq!(s.state.transition_selection, vec![t.id], "the pasted transition is selected");
+    assert_eq!(s.history.undo.len(), n_undo + 1, "one undo step");
+    assert_eq!(s.history.undo.last().unwrap().0, "Paste Transition");
+    s.execute("edit.undo", json!({})).unwrap();
+    assert_eq!(transition_ids(&s), before, "undo takes it away again");
+    // with a clip selected it goes at the clip's free edges, wherever the playhead is
+    let c = s.active_sequence().unwrap().video_tracks[0].items[4].clone();
+    s.execute("timeline.select", json!({"clips": [c.id.0]})).unwrap();
+    let r = s.execute("edit.paste", json!({})).unwrap();
+    assert!(!r["transitions"].as_array().unwrap().is_empty(), "{r}");
+    assert!(all(&s).iter().any(|t| t.effect.effect == "iris_round"
+        && (t.from == Some(c.id) || t.to == Some(c.id))
+        && t.effect.params["border_width"] == source.effect.params["border_width"]));
+    // copying clips replaces the copied transition: Paste pastes clips again
+    s.execute("timeline.select", json!({"clips": [c.id.0]})).unwrap();
+    s.execute("edit.copy", json!({})).unwrap();
+    assert!(s.state.transition_clipboard.is_empty() && !s.state.clipboard.is_empty());
+    // and copying a transition again empties the clips
+    s.execute("timeline.select", json!({"transitions": [src]})).unwrap();
+    s.execute("edit.copy", json!({})).unwrap();
+    assert!(s.state.clipboard.is_empty() && s.state.transition_clipboard.len() == 1);
+    assert!(s.execute("edit.pasteInsert", json!({})).is_err(), "Paste Insert is for clips");
+}
+
 /// #224 / Effect Controls: Duration follows the alignment, Alignment re-aligns on the cut, Start
 /// moves it (Custom Start), all within the clips it joins; a drag is one undo step.
 #[test]

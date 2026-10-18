@@ -356,6 +356,11 @@ pub struct EditorState {
     /// Sequence markers copied with the clipboard clips (start relative to the copied range).
     #[serde(skip)]
     pub clipboard_markers: Vec<filmcraft_project::Marker>,
+    /// A Timeline transition copied with Edit ▸ Copy (#2350): Paste puts it, with its type,
+    /// duration and settings, at the edit at the playhead or at the selected clips' edges. Copying
+    /// clips clears it, and copying a transition clears the clips.
+    #[serde(skip)]
+    pub transition_clipboard: Vec<(filmcraft_project::TrackKind, filmcraft_project::Transition)>,
     /// The last Edit ▸ Find… (Find Next continues it).
     #[serde(default)]
     pub find: Option<project_tools::FindState>,

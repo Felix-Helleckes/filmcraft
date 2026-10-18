@@ -744,3 +744,29 @@ fn middle_closing_an_inactive_project_tab_keeps_the_inspector_target() {
     let source = d.app().ui.panels.inspector_source;
     assert_eq!(d.label("info.item"), name, "closing a tab must not select its stale item; focused={focused:?}, source={source:?}");
 }
+
+/// #2350: Edit ▸ Copy with a transition selected copies it (and puts its name on the system
+/// clipboard, which is what lets Ctrl+V reach the app on Windows and Linux); Edit ▸ Paste puts it
+/// at the edit at the playhead.
+#[test]
+fn edit_copy_and_paste_a_transition_from_the_menus() {
+    let mut d = Driver::demo();
+    let seq = d.exec("sequence.inspect", json!({}));
+    let cut = seq["video"][0]["items"][2]["start"].as_i64().unwrap();
+    let next = seq["video"][0]["items"][3]["start"].as_i64().unwrap();
+    d.exec("playhead.set", json!({"time": cut}));
+    let id = d.exec("sequence.applyVideoTransition", json!({"effect": "Iris Round", "frames": 10}))["transition"].as_u64().unwrap();
+    d.exec("timeline.select", json!({"transitions": [id]}));
+    d.ok("ui.set", json!({"focused": "Timeline"}));
+    d.frames(2);
+    d.ok("ui.menu.invoke", json!({"id": "edit.copy"}));
+    let copied = d.harness.output().platform_output.commands.iter().any(|c| matches!(c, egui::OutputCommand::CopyText(t) if t == "Iris Round"));
+    assert!(copied, "the transition's name is on the system clipboard: {:?}", d.harness.output().platform_output.commands);
+    let count = |d: &mut Driver| {
+        d.exec("sequence.inspect", json!({}))["video"][0]["transitions"].as_array().unwrap().iter().filter(|t| t["effect"] == "iris_round").count()
+    };
+    assert_eq!(count(&mut d), 1);
+    d.exec("playhead.set", json!({"time": next}));
+    d.ok("ui.menu.invoke", json!({"id": "edit.paste"}));
+    assert_eq!(count(&mut d), 2, "pasted at the next edit");
+}

@@ -122,6 +122,16 @@ fn has_clipboard(s: &Session) -> std::result::Result<(), String> {
     has_seq(s)?;
     if s.state.clipboard.is_empty() { Err("clipboard is empty".into()) } else { Ok(()) }
 }
+/// Clips or a copied transition to paste (#2350).
+fn has_paste(s: &Session) -> std::result::Result<(), String> {
+    has_seq(s)?;
+    if s.state.clipboard.is_empty() && s.state.transition_clipboard.is_empty() { Err("clipboard is empty".into()) } else { Ok(()) }
+}
+/// Clips or a transition selected (Copy).
+fn has_copyable(s: &Session) -> std::result::Result<(), String> {
+    has_seq(s)?;
+    if s.state.selection.is_empty() && s.state.transition_selection.is_empty() { Err("nothing selected".into()) } else { Ok(()) }
+}
 
 /// The ids a caller named under `many` (a list) or `one` (a single id), when the command documents
 /// that key as ids (`"clips":[id]`, `"item":id`); `None` when it named none.
@@ -1625,11 +1635,21 @@ fn build() -> Vec<CommandSpec> {
             })?;
             Ok(Value::Null)
         }),
-        cmd!("edit.copy", "Copy", ["Edit"], Some("Cmd+C"), "{}", has_selection, |s, _| {
+        cmd!("edit.copy", "Copy", ["Edit"], Some("Cmd+C"), "{}", has_copyable, |s, _| {
+            // a transition selected in the Timeline (and no clips) is copied as a transition (#2350)
+            if s.state.selection.is_empty() {
+                copy_transitions(s);
+                return Ok(json!({"copied": 0, "transitions": s.state.transition_clipboard.len()}));
+            }
             copy_selection(s);
             Ok(json!({"copied": s.state.clipboard.len()}))
         }),
-        cmd!("edit.paste", "Paste", ["Edit"], Some("Cmd+V"), "{}", has_clipboard, |s, _| paste(s, false)),
+        cmd!("edit.paste", "Paste", ["Edit"], Some("Cmd+V"), "{}", has_paste, |s, _| {
+            if s.state.clipboard.is_empty() {
+                return paste_transition(s);
+            }
+            paste(s, false)
+        }),
         cmd!("edit.pasteInsert", "Paste Insert", ["Edit"], Some("Cmd+Shift+V"), "{}", has_clipboard, |s, _| paste(s, true)),
         cmd!("edit.clear", "Clear", ["Edit"], Some("Backspace"), r#"{"clips":[id]?}"#, has_any_selection, |s, p| {
             if p.get("clips").is_none() && p.get("clip").is_none() && s.state.selection.is_empty() {
@@ -3636,6 +3656,59 @@ fn copy_selection(s: &mut Session) {
     }
     s.state.clipboard = clip;
     s.state.clipboard_markers = markers;
+    s.state.transition_clipboard.clear();
+}
+
+/// Edit ▸ Copy with transitions selected in the Timeline: they go to the transition clipboard,
+/// and the clip clipboard is emptied, so Paste pastes what was copied last (#2350).
+fn copy_transitions(s: &mut Session) {
+    let Some(q) = s.active_sequence() else { return };
+    let ids = s.state.transition_selection.clone();
+    let mut out = Vec::new();
+    for kind in [TrackKind::Video, TrackKind::Audio] {
+        for t in q.tracks(kind) {
+            out.extend(t.transitions.iter().filter(|x| ids.contains(&x.id)).map(|x| (kind, x.clone())));
+        }
+    }
+    if out.is_empty() {
+        return;
+    }
+    s.state.transition_clipboard = out;
+    s.state.clipboard.clear();
+    s.state.clipboard_markers.clear();
+}
+
+/// Edit ▸ Paste of a copied transition (#2350): the same transition type, duration, direction and
+/// settings (keyframes included) at the edit at the playhead on the targeted tracks, or at the
+/// edges of the selected clips / the selected edit points, exactly where Apply Video / Audio
+/// Transition would put one. One undo step; the pasted transitions are selected.
+fn paste_transition(s: &mut Session) -> Result<Value> {
+    let Some((kind, copied)) = s.state.transition_clipboard.first().cloned() else {
+        return Err(EngineError::Other("clipboard is empty".into()));
+    };
+    let frames = s.sequence_rate().frame_at(copied.duration).max(1);
+    let cmd = if kind == TrackKind::Video { "sequence.applyVideoTransition" } else { "sequence.applyAudioTransition" };
+    let n0 = s.history.undo.len();
+    let r = s.execute(cmd, json!({"effect": copied.effect.effect, "frames": frames, "reverse": copied.reverse}))?;
+    let ids: Vec<TransitionId> = match r.get("transitions").and_then(Value::as_array) {
+        Some(a) => a.iter().filter_map(Value::as_u64).map(TransitionId).collect(),
+        None => r.get("transition").and_then(Value::as_u64).map(TransitionId).into_iter().collect(),
+    };
+    let effect = copied.effect;
+    let pasted = ids.clone();
+    let done = s.edit_sequence("Paste Transition", move |q, _, st| {
+        for t in q.tracks_mut(kind).iter_mut() {
+            for x in t.transitions.iter_mut().filter(|x| pasted.contains(&x.id)) {
+                x.effect = effect.clone();
+            }
+        }
+        st.selection.clear();
+        st.transition_selection = pasted;
+        Ok(())
+    });
+    crate::clip_ops::collapse_history(s, n0, "Paste Transition");
+    done?;
+    Ok(json!({"transitions": ids.iter().map(|t| t.0).collect::<Vec<_>>()}))
 }
 
 fn paste(s: &mut Session, insert: bool) -> Result<Value> {

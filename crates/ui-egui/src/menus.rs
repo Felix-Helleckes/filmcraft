@@ -623,7 +623,11 @@ fn clipboard_media_key(media: &crate::ClipboardMedia) -> String {
 /// clip names there, like other editors put their own data on the clipboard, so Ctrl+V pastes the
 /// clips right after a copy.
 fn put_clip_names_on_system_clipboard(app: &FilmcraftApp, ctx: &egui::Context) {
-    let names: Vec<&str> = app.session.state.clipboard.iter().map(|(_, _, c)| c.name.as_str()).collect();
+    let mut names: Vec<&str> = app.session.state.clipboard.iter().map(|(_, _, c)| c.name.as_str()).collect();
+    // a copied transition (#2350): its name, for the same reason
+    if names.is_empty() {
+        names = app.session.state.transition_clipboard.iter().map(|(_, t)| t.effect.def().map_or("Transition", |d| d.name)).collect();
+    }
     if names.is_empty() {
         return;
     }
