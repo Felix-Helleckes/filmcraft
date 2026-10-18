@@ -3578,3 +3578,12 @@
 
 # The native macOS application menu (Settings…).
 	Settings	Preferências
+	Keyframe Interpolation: Linear	Interpolação de quadros-chave: Linear
+	Keyframe Interpolation: Bezier	Interpolação de quadros-chave: Bézier
+	Keyframe Interpolation: Auto Bezier	Interpolação de quadros-chave: Bézier automático
+	Keyframe Interpolation: Continuous Bezier	Interpolação de quadros-chave: Bézier contínuo
+	Keyframe Interpolation: Hold	Interpolação de quadros-chave: Manter
+	Keyframe Interpolation: Ease In	Interpolação de quadros-chave: Suavizar entrada
+	Keyframe Interpolation: Ease Out	Interpolação de quadros-chave: Suavizar saída
+	Select keyframes in Effect Controls first	Selecione primeiro quadros-chave em Controles de efeito
+	Keyframes	Quadros-chave

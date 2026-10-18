@@ -3610,3 +3610,12 @@
 	Shows the version, community links and credits in a FilmCraft window.	Muestra la versión, los enlaces de la comunidad y los créditos en una ventana de FilmCraft.
 	Couldn't open your web browser	No se pudo abrir el navegador web
 	Open this address in your browser yourself:	Abre esta dirección tú mismo en el navegador:
+	Keyframe Interpolation: Linear	Interpolación de fotogramas clave: Lineal
+	Keyframe Interpolation: Bezier	Interpolación de fotogramas clave: Bézier
+	Keyframe Interpolation: Auto Bezier	Interpolación de fotogramas clave: Bézier automático
+	Keyframe Interpolation: Continuous Bezier	Interpolación de fotogramas clave: Bézier continuo
+	Keyframe Interpolation: Hold	Interpolación de fotogramas clave: Mantener
+	Keyframe Interpolation: Ease In	Interpolación de fotogramas clave: Desacelerar entrada
+	Keyframe Interpolation: Ease Out	Interpolación de fotogramas clave: Desacelerar salida
+	Select keyframes in Effect Controls first	Selecciona primero fotogramas clave en Controles de efectos
+	Keyframes	Fotogramas clave

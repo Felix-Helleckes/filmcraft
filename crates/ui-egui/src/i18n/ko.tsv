@@ -3596,3 +3596,12 @@
 	Shows the version, community links and credits in a FilmCraft window.	FilmCraft 창에 버전, 커뮤니티 링크, 제작진을 보여 줍니다.
 	Couldn't open your web browser	웹 브라우저를 열 수 없습니다
 	Open this address in your browser yourself:	이 주소를 브라우저에서 직접 여세요:
+	Keyframe Interpolation: Linear	키프레임 보간: 선형
+	Keyframe Interpolation: Bezier	키프레임 보간: 베지어
+	Keyframe Interpolation: Auto Bezier	키프레임 보간: 자동 베지어
+	Keyframe Interpolation: Continuous Bezier	키프레임 보간: 연속 베지어
+	Keyframe Interpolation: Hold	키프레임 보간: 정지
+	Keyframe Interpolation: Ease In	키프레임 보간: 천천히 들어오기
+	Keyframe Interpolation: Ease Out	키프레임 보간: 천천히 나가기
+	Select keyframes in Effect Controls first	먼저 효과 컨트롤에서 키프레임을 선택하세요
+	Keyframes	키프레임

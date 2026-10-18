@@ -3585,3 +3585,12 @@
 	Shows the version, community links and credits in a FilmCraft window.	在 FilmCraft 窗口中显示版本、社区链接和致谢。
 	Couldn't open your web browser	无法打开网页浏览器
 	Open this address in your browser yourself:	请自行在浏览器中打开此地址：
+	Keyframe Interpolation: Linear	关键帧插值：线性
+	Keyframe Interpolation: Bezier	关键帧插值：贝塞尔曲线
+	Keyframe Interpolation: Auto Bezier	关键帧插值：自动贝塞尔曲线
+	Keyframe Interpolation: Continuous Bezier	关键帧插值：连续贝塞尔曲线
+	Keyframe Interpolation: Hold	关键帧插值：定格
+	Keyframe Interpolation: Ease In	关键帧插值：缓入
+	Keyframe Interpolation: Ease Out	关键帧插值：缓出
+	Select keyframes in Effect Controls first	请先在效果控件中选择关键帧
+	Keyframes	关键帧

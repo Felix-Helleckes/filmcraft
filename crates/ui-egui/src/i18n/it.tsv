@@ -3601,3 +3601,12 @@
 	Shows the version, community links and credits in a FilmCraft window.	Mostra la versione, i link della community e i riconoscimenti in una finestra di FilmCraft.
 	Couldn't open your web browser	Impossibile aprire il browser web
 	Open this address in your browser yourself:	Apri tu questo indirizzo nel browser:
+	Keyframe Interpolation: Linear	Interpolazione fotogrammi chiave: Lineare
+	Keyframe Interpolation: Bezier	Interpolazione fotogrammi chiave: Bézier
+	Keyframe Interpolation: Auto Bezier	Interpolazione fotogrammi chiave: Bézier automatica
+	Keyframe Interpolation: Continuous Bezier	Interpolazione fotogrammi chiave: Bézier continua
+	Keyframe Interpolation: Hold	Interpolazione fotogrammi chiave: Mantieni
+	Keyframe Interpolation: Ease In	Interpolazione fotogrammi chiave: Rallenta in entrata
+	Keyframe Interpolation: Ease Out	Interpolazione fotogrammi chiave: Rallenta in uscita
+	Select keyframes in Effect Controls first	Seleziona prima dei fotogrammi chiave in Controllo effetti
+	Keyframes	Fotogrammi chiave
