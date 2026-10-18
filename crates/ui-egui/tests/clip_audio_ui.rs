@@ -1,6 +1,6 @@
 //! Audio of video clips (#223): a selected video clip shows the Volume, Channel Volume and Panner
 //! of the audio linked to it as well, as in Premiere, and the Volume line on audio clips in the
-//! timeline can be dragged and keyframed.
+//! timeline can be dragged and keyframed, like the line Show Clip Keyframes puts on any clip (#2213).
 //!
 //! With `FILMCRAFT_UI_SHOTS=<dir>` the tests also render the UI with wgpu and write PNGs there.
 
@@ -248,4 +248,89 @@ fn volume_keyframes_on_the_timeline() {
     d.frames(3);
     d.click(&format!("{id}.kf.0.delete"));
     assert_eq!(d.level(pair.audio).1, keys[1..]);
+}
+
+/// The clip's parameter `effect`/`param`: its value and its keyframes (media time, value).
+fn param_of(it: &TrackItem, effect: &str, param: &str) -> (f64, Vec<(i64, f64)>) {
+    let p = it.effect(effect).unwrap().param(param).unwrap().clone();
+    (p.value.as_f64().unwrap(), p.keyframes.iter().map(|k| (k.time.0, k.value.as_f64().unwrap())).collect())
+}
+
+/// #2213: right-click ▸ Show Clip Keyframes picks the parameter a clip's line shows, as in
+/// Premiere: a video clip then gets a line for Opacity (or Motion, Time Remapping, an added
+/// effect) that drags and keyframes like the Volume line, and an audio clip can show Panner.
+#[test]
+fn show_clip_keyframes_picks_the_line_of_a_clip() {
+    let (mut d, pair) = Driver::demo(&[]);
+    d.ok("ui.set", json!({"timeline": {"videoTrackHeight": 90}}));
+    d.frames(3);
+    let line = format!("timeline.clip.{}.keyframes", pair.video);
+    assert!(d.find(&line).is_none(), "video clips show no line until a parameter is picked");
+
+    // right-click the video clip ▸ Show Clip Keyframes ▸ Opacity ▸ Opacity
+    d.exec("sequence.linkedSelection", json!({"on": false}));
+    let clip = d.rect(&format!("timeline.clip.{}", pair.video));
+    d.ok("ui.click", json!({"x": clip[0] + clip[2] * 0.5, "y": clip[1] + 8.0, "button": "right"}));
+    d.frames(3);
+    d.click("timeline.clipMenu.clip.showKeyframes");
+    d.click("timeline.clipMenu.showKeyframes.opacity#0");
+    d.click("timeline.clipMenu.showKeyframes.opacity#0/opacity");
+    let at = d.rect(&line);
+    let (_, y) = centre(at);
+    assert!(y < clip[1] + clip[3] * 0.5, "100 % sits at the top of the clip: {at:?} in {clip:?}");
+
+    // dragging it down lowers the opacity, in one undo step
+    d.drag(centre(at), (0.0, 25.0));
+    let (op, keys) = param_of(&d.item(pair.video), "opacity", "opacity");
+    assert!(op < 90.0 && keys.is_empty(), "{op}");
+    let moved = d.rect(&line);
+    assert!(moved[1] > at[1] + 10.0, "the line went down with the pointer: {at:?} → {moved:?}");
+    d.shot("clip-keyframes-opacity");
+    d.exec("edit.undo", json!({}));
+    assert_eq!(param_of(&d.item(pair.video), "opacity", "opacity").0, 100.0);
+
+    // the Pen tool keyframes it, a keyframe drags in time and value, right-click deletes it
+    let (_, y) = centre(d.rect(&line));
+    d.ok("ui.set", json!({"tool": "Pen"}));
+    for f in [0.3, 0.7] {
+        d.ok("ui.click", json!({"x": clip[0] + clip[2] * f, "y": y}));
+        d.frames(3);
+    }
+    d.ok("ui.set", json!({"tool": "Selection"}));
+    let (_, keys) = param_of(&d.item(pair.video), "opacity", "opacity");
+    assert_eq!(keys.len(), 2, "{keys:?}");
+    let k = d.rect(&format!("{line}.kf.1"));
+    d.drag(centre(k), (40.0, 20.0));
+    let (_, moved) = param_of(&d.item(pair.video), "opacity", "opacity");
+    assert!(moved[1].0 > keys[1].0 && moved[1].1 < keys[1].1, "{keys:?} → {moved:?}");
+    d.ok("ui.click", json!({"id": format!("{line}.kf.0"), "button": "right"}));
+    d.frames(3);
+    d.click(&format!("{line}.kf.0.delete"));
+    assert_eq!(param_of(&d.item(pair.video), "opacity", "opacity").1.len(), 1);
+    assert!(param_of(&d.item(pair.audio), "volume", "level").1.is_empty(), "the audio clip's Volume is untouched");
+
+    // ▸ None hides it again
+    d.ok("ui.click", json!({"x": clip[0] + clip[2] * 0.5, "y": clip[1] + 8.0, "button": "right"}));
+    d.frames(3);
+    d.click("timeline.clipMenu.clip.showKeyframes");
+    d.click("timeline.clipMenu.showKeyframes.none");
+    assert!(d.find(&line).is_none());
+
+    // an audio clip shows Volume until Panner ▸ Balance is picked
+    let vol = format!("timeline.clip.{}.volume", pair.audio);
+    let level = param_of(&d.item(pair.audio), "volume", "level").0;
+    let aclip = d.rect(&format!("timeline.clip.{}", pair.audio));
+    d.rect(&vol);
+    d.ok("ui.click", json!({"x": aclip[0] + aclip[2] * 0.5, "y": aclip[1] + 8.0, "button": "right"}));
+    d.frames(3);
+    d.click("timeline.clipMenu.clip.showKeyframes");
+    assert!(d.find("timeline.clipMenu.showKeyframes.none").is_none(), "an audio clip always shows a line");
+    d.click("timeline.clipMenu.showKeyframes.panner#0");
+    d.click("timeline.clipMenu.showKeyframes.panner#0/balance");
+    assert!(d.find(&vol).is_none());
+    let pan = format!("timeline.clip.{}.keyframes", pair.audio);
+    let p = d.rect(&pan);
+    d.drag(centre(p), (0.0, -10.0));
+    assert!(param_of(&d.item(pair.audio), "panner", "balance").0 > 1.0, "dragging up pans right");
+    assert_eq!(param_of(&d.item(pair.audio), "volume", "level").0, level);
 }
