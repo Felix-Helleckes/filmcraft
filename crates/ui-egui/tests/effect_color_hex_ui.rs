@@ -122,6 +122,18 @@ fn the_hex_field_takes_typing_a_character_at_a_time() {
 }
 
 #[test]
+fn color_parameters_are_stored_srgb_encoded() {
+    // `ultra_key` encodes each pixel with `effects::enc` (linear → sRGB) before comparing it with
+    // the key colour, which it uses exactly as stored, so the stored components are sRGB. Ultra
+    // Key's default is `[0.0, 0.8, 0.2]`, which is `#00cc33`; reading it as linear would give
+    // `#00e77c` instead. The swatch, the picker and the hex field all depend on this.
+    let (mut d, clip) = Driver::demo();
+    d.exec("effects.apply", json!({"clips": [clip], "effect": "ultra_key"}));
+    d.frames(3);
+    assert_eq!(d.rgb(clip, "ultra_key", "key_color"), [0x00, 0xcc, 0x33]);
+}
+
+#[test]
 fn every_keying_effect_with_a_color_parameter_has_the_field() {
     let (mut d, clip) = Driver::demo();
     for (effect, param) in [("ultra_key", "key_color"), ("color_key", "color")] {

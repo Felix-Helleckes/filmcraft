@@ -626,9 +626,17 @@ pub(crate) fn param_row(
             });
         }
         (ParamKind::Color, ParamValue::Color(c)) => {
-            let mut rgba = egui::Rgba::from_rgba_unmultiplied(c[0], c[1], c[2], c[3]);
-            if egui::color_picker::color_edit_button_rgba(&mut vui, &mut rgba, egui::color_picker::Alpha::Opaque).changed() {
-                set = Some(json!([rgba.r(), rgba.g(), rgba.b(), rgba.a()]));
+            // A colour parameter holds sRGB-encoded components, not linear ones: `ultra_key`
+            // encodes each pixel with `effects::enc` (linear → sRGB) before comparing it with the
+            // key colour, which it uses as it is stored (`render/src/vfx/color.rs`). egui's `Rgba`
+            // is linear, so reading the parameter through it showed the wrong colour — Ultra Key's
+            // default `[0.0, 0.8, 0.2]` is `#00cc33`, but the picker opened on `#00e77c`. Reading
+            // and writing it as `Color32` keeps the swatch, the picker and the hex field agreed.
+            let q = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+            let mut srgb = egui::Color32::from_rgb(q(c[0]), q(c[1]), q(c[2]));
+            if egui::color_picker::color_edit_button_srgba(&mut vui, &mut srgb, egui::color_picker::Alpha::Opaque).changed() {
+                // `Alpha::Opaque` doesn't edit alpha, so the parameter keeps the one it had.
+                set = Some(json!([srgb.r() as f32 / 255.0, srgb.g() as f32 / 255.0, srgb.b() as f32 / 255.0, c[3]]));
             }
             // Eyedropper: arm it, then click a pixel in the Program monitor (Esc cancels)
             let target = crate::state::Eyedropper { clip: clip.0, effect: idx, param: pd.id.to_string(), mask };
