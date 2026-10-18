@@ -3601,3 +3601,7 @@
 	Shows the version, community links and credits in a FilmCraft window.	Mostra la versione, i link della community e i riconoscimenti in una finestra di FilmCraft.
 	Couldn't open your web browser	Impossibile aprire il browser web
 	Open this address in your browser yourself:	Apri tu questo indirizzo nel browser:
+	Group Clips into Cameras	Raggruppa clip per videocamera
+	Camera Label	Etichetta videocamera
+	Leave out clips without timecode	Escludi le clip senza timecode
+	No timecode: {names}	Senza timecode: {names}

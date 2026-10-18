@@ -3578,3 +3578,7 @@
 
 # The native macOS application menu (Settings…).
 	Settings	Preferências
+	Group Clips into Cameras	Agrupar clipes em câmeras
+	Camera Label	Rótulo da câmera
+	Leave out clips without timecode	Deixar de fora clipes sem timecode
+	No timecode: {names}	Sem timecode: {names}

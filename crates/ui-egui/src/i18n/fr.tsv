@@ -3577,3 +3577,7 @@
 	Export the labels to a preset file…	Exporter les étiquettes dans un fichier de paramètre prédéfini…
 	Show the presets folder	Afficher le dossier des paramètres prédéfinis
 	Delete this preset	Supprimer ce paramètre prédéfini
+	Group Clips into Cameras	Regrouper les clips par caméra
+	Camera Label	Étiquette de caméra
+	Leave out clips without timecode	Ignorer les clips sans timecode
+	No timecode: {names}	Sans timecode : {names}

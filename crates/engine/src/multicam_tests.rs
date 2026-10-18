@@ -868,3 +868,77 @@ fn multicam_menu_items_are_enabled_only_for_clips_they_work_on() {
     let q = s.active_sequence().unwrap();
     assert!(q.find_item(nest).is_none(), "flattened into the camera clips");
 }
+
+/// #2241: synchronised by timecode, clips that share a Camera Label (or Camera Angle) are one
+/// camera: one video and one audio track with every take at its own timecode. A take that would
+/// overlap another of its camera, and a clip without the label, get cameras of their own. Clips
+/// without a timecode are listed, and left out with `excludeNoTimecode`.
+#[test]
+fn timecode_multicam_groups_takes_into_cameras_by_metadata() {
+    let Some((a, b, rec)) = fixtures() else { return };
+    let mut s = Session::default();
+    let items = import(&mut s, &[&a, &b, &rec]);
+    let rate = FrameRate::FPS_24;
+    // camera A's two takes (0–3 s and 6–12 s of the recording), camera B, the recorder
+    let take = |s: &mut Session, f0: i64, f1: i64, name: &str| {
+        let r = s.execute("clip.makeSubclip", json!({"item": items[0].0, "startFrame": f0, "endFrame": f1, "name": name})).unwrap();
+        ItemId(r["item"].as_u64().unwrap())
+    };
+    let (a1, a2) = (take(&mut s, 0, 72, "A take 1"), take(&mut s, 144, 288, "A take 2"));
+    // a third take overlapping the second: a camera of its own
+    let a3 = take(&mut s, 192, 240, "A take 3");
+    let mut p = (*s.project).clone();
+    for (it, label) in [(a1, "A"), (a2, "A"), (a3, "A"), (items[1], "B")] {
+        p.item_mut(it).unwrap().metadata.insert("Camera Label".into(), label.into());
+        p.item_mut(it).unwrap().metadata.insert("Camera Angle".into(), format!("angle {label}"));
+    }
+    s.project = std::sync::Arc::new(p);
+    let all = [a1, a2, a3, items[1], items[2]];
+
+    assert!(on_items(&mut s, "clip.createMulticam", &all, json!({"method": "audio", "group": "cameraLabel"})).is_err(), "grouping needs timecode");
+    assert!(on_items(&mut s, "clip.createMulticam", &all, json!({"method": "timecode", "group": "sideways"})).is_err());
+
+    let r = on_items(&mut s, "clip.createMulticam", &all, json!({"method": "timecode", "group": "cameraLabel"})).unwrap();
+    assert_eq!(r["cameras"], json!(["A", "A (2)", "B", "recorder.wav"]), "{r}");
+    assert_eq!(r["noTimecode"], json!(["recorder.wav"]));
+    let q = s.project.sequence(ItemId(r["sequence"].as_u64().unwrap())).unwrap().clone();
+    q.check().unwrap();
+    let mc = q.multicam.clone().unwrap();
+    assert_eq!(mc.cameras.len(), 4);
+    assert_eq!(q.video_tracks.len(), 3, "A, A (2), B");
+    let v1 = &q.video_tracks[0];
+    assert_eq!(v1.name, "A");
+    assert_eq!(v1.items.iter().map(|i| i.item).collect::<Vec<_>>(), vec![a1, a2], "both takes on camera A's track");
+    // each take sits at its own timecode: take 2 starts 6 s after take 1, B 2.5 s after A
+    let (t1, t2) = (find_clip(&q, a1, true), find_clip(&q, a2, true));
+    assert_eq!(t2.start - t1.start, rate.tick_of(144));
+    assert_eq!(find_clip(&q, items[1], true).start - t1.start, rate.tick_of(60));
+    assert_eq!(find_clip(&q, a3, true).start - t1.start, rate.tick_of(192));
+    // their audio is on one audio track too, linked to the video
+    let a_track = mc.cameras[0].audio_tracks[0];
+    let at = q.audio_tracks.iter().find(|t| t.id == a_track).unwrap();
+    assert_eq!(at.items.iter().map(|i| i.item).collect::<Vec<_>>(), vec![a1, a2]);
+    assert_eq!(find_clip(&q, a2, false).link, t2.link);
+    assert!(t2.link.is_some());
+
+    // Camera Angle groups the same way; enumerated names stay in camera order
+    let r = on_items(&mut s, "clip.createMulticam", &all, json!({"method": "timecode", "group": "cameraAngle", "cameraNames": "track"})).unwrap();
+    assert_eq!(r["cameras"], json!(["Camera 1", "Camera 2", "Camera 3", "Camera 4"]));
+    let r = on_items(&mut s, "clip.createMulticam", &all, json!({"method": "timecode", "group": "cameraAngle"})).unwrap();
+    assert_eq!(r["cameras"], json!(["angle A", "angle A (2)", "angle B", "recorder.wav"]));
+
+    // the recorder has no timecode: left out on request, and it stays in its bin
+    let r =
+        on_items(&mut s, "clip.createMulticam", &all, json!({"method": "timecode", "group": "cameraLabel", "excludeNoTimecode": true, "processedBin": true}))
+            .unwrap();
+    assert_eq!(r["cameras"], json!(["A", "A (2)", "B"]));
+    assert_eq!(r["excluded"], 1);
+    let q = s.project.sequence(ItemId(r["sequence"].as_u64().unwrap())).unwrap();
+    assert!(q.audio_tracks.iter().all(|t| t.items.iter().all(|i| i.item != items[2])));
+    assert_eq!(s.project.root.parent_of(items[2]), Some(s.project.root.id), "the excluded clip was not moved to Processed Clips");
+
+    // without grouping nothing changes: a camera per clip
+    let r = on_items(&mut s, "clip.createMulticam", &[items[0], items[1]], json!({"method": "timecode"})).unwrap();
+    assert_eq!(r["cameras"].as_array().unwrap().len(), 2);
+    assert_eq!(r["noTimecode"], json!([]));
+}
