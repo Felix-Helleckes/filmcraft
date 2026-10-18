@@ -634,7 +634,9 @@ pub(crate) fn param_row(
             // and writing it as `Color32` keeps the swatch, the picker and the hex field agreed.
             let q = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
             let mut srgb = egui::Color32::from_rgb(q(c[0]), q(c[1]), q(c[2]));
-            if egui::color_picker::color_edit_button_srgba(&mut vui, &mut srgb, egui::color_picker::Alpha::Opaque).changed() {
+            let sw = egui::color_picker::color_edit_button_srgba(&mut vui, &mut srgb, egui::color_picker::Alpha::Opaque);
+            app.auto.add(&format!("effectControls.{}.{}.swatch", e.effect, pkey), sw.rect, pd.label);
+            if sw.changed() {
                 // `Alpha::Opaque` doesn't edit alpha, so the parameter keeps the one it had.
                 set = Some(json!([srgb.r() as f32 / 255.0, srgb.g() as f32 / 255.0, srgb.b() as f32 / 255.0, c[3]]));
             }
@@ -841,9 +843,13 @@ pub fn lumetri_panel(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
                             actions.push(json!({"clip": clip.0, "effect": idx, "param": pd.id, "value": pd.default.as_f64().unwrap_or(0.0)}));
                         }
                     } else if let ParamValue::Color(c) = v {
-                        let mut rgba = egui::Rgba::from_rgba_unmultiplied(c[0], c[1], c[2], c[3]);
-                        if egui::color_picker::color_edit_button_rgba(ui, &mut rgba, egui::color_picker::Alpha::Opaque).changed() {
-                            actions.push(json!({"clip": clip.0, "effect": idx, "param": pd.id, "value": [rgba.r(), rgba.g(), rgba.b(), 1.0]}));
+                        // sRGB-encoded, as in `param_row`: Lumetri's tints are the same kind of
+                        // colour parameter, so they must not be read through egui's linear `Rgba`.
+                        let q = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+                        let mut srgb = egui::Color32::from_rgb(q(c[0]), q(c[1]), q(c[2]));
+                        if egui::color_picker::color_edit_button_srgba(ui, &mut srgb, egui::color_picker::Alpha::Opaque).changed() {
+                            let v = [srgb.r() as f32 / 255.0, srgb.g() as f32 / 255.0, srgb.b() as f32 / 255.0, 1.0];
+                            actions.push(json!({"clip": clip.0, "effect": idx, "param": pd.id, "value": v}));
                         }
                     }
                 });

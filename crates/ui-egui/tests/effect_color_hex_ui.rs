@@ -7,6 +7,7 @@
 use std::sync::mpsc::{Sender, channel};
 
 use egui_kittest::Harness;
+use egui_kittest::kittest::{By, NodeT, Queryable};
 use filmcraft_engine::Session;
 use filmcraft_project::ClipId;
 use filmcraft_ui_egui::FilmcraftApp;
@@ -86,6 +87,27 @@ impl Driver {
         let c = self.color(clip, effect, param);
         [0, 1, 2].map(|i| (c[i].clamp(0.0, 1.0) * 255.0).round() as u8)
     }
+    /// Everything the accessibility tree exposes inside the smallest foreground area — the colour
+    /// picker's popup while it is open.
+    fn popup_text(&mut self) -> String {
+        self.frames(2);
+        let areas: Vec<egui::Rect> = self
+            .harness
+            .ctx
+            .memory(|m| m.areas().visible_layer_ids().into_iter().filter(|l| l.order == egui::Order::Foreground).filter_map(|l| m.area_rect(l.id)).collect());
+        let r = areas.into_iter().min_by(|a, b| a.area().total_cmp(&b.area())).expect("the colour picker opened");
+        self.harness
+            .query_all(By::new())
+            // the tree's root carries no bounds, and `rect()` panics without them
+            .filter(|n| n.accesskit_node().bounding_box().is_some())
+            .filter(|n| r.contains(n.rect().center()))
+            .map(|n| {
+                let node = n.accesskit_node();
+                format!("{} {}", node.label().unwrap_or_default(), node.value().unwrap_or_default())
+            })
+            .collect::<Vec<_>>()
+            .join(" | ")
+    }
 }
 
 #[test]
@@ -131,6 +153,24 @@ fn color_parameters_are_stored_srgb_encoded() {
     d.exec("effects.apply", json!({"clips": [clip], "effect": "ultra_key"}));
     d.frames(3);
     assert_eq!(d.rgb(clip, "ultra_key", "key_color"), [0x00, 0xcc, 0x33]);
+}
+
+#[test]
+fn the_picker_opens_on_the_parameter_read_as_srgb() {
+    // The swatch and its picker go through `color_edit_button_srgba`, so they must open on the
+    // stored components read as sRGB. Ultra Key's default `[0.0, 0.8, 0.2]` is 0 / 204 / 51;
+    // reading it as linear, as egui's `Rgba` does, would show 0 / 231 / 124 instead.
+    let (mut d, clip) = Driver::demo();
+    d.exec("effects.apply", json!({"clips": [clip], "effect": "ultra_key"}));
+    d.frames(3);
+    d.click("effectControls.ultra_key.key_color.swatch");
+    let shown = d.popup_text();
+    for n in ["204", "51"] {
+        assert!(shown.contains(n), "the picker should show {n}: {shown:?}");
+    }
+    for n in ["231", "124"] {
+        assert!(!shown.contains(n), "the picker read the parameter as linear ({n}): {shown:?}");
+    }
 }
 
 #[test]
