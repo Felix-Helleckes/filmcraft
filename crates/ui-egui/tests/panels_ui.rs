@@ -744,3 +744,30 @@ fn middle_closing_an_inactive_project_tab_keeps_the_inspector_target() {
     let source = d.app().ui.panels.inspector_source;
     assert_eq!(d.label("info.item"), name, "closing a tab must not select its stale item; focused={focused:?}, source={source:?}");
 }
+
+/// #2264, #2265: with the graphic editor focused and a layer selected, Edit ▸ Copy / Paste /
+/// Duplicate act on graphic layers; with the Timeline focused they stay clip edits.
+#[test]
+fn edit_copy_paste_duplicate_act_on_graphic_layers_in_the_graphic_editor() {
+    let mut d = Driver::demo();
+    let clip = d.exec("graphics.newRectangle", json!({"position": [300, 200], "size": [100, 60]}))["clip"].as_u64().unwrap();
+    d.exec("graphics.newEllipse", json!({"clip": clip, "position": [500, 400], "size": [40, 40]}));
+    let count = |d: &mut Driver| d.exec("graphics.list", json!({"clip": clip}))["layers"].as_array().unwrap().len();
+    d.exec("graphics.selectLayer", json!({"clip": clip, "layers": [0]}));
+    // the Timeline has focus: Copy copies the clip, not a layer
+    d.ok("ui.set", json!({"focused": "Timeline"}));
+    d.frames(2);
+    d.ok("ui.menu.invoke", json!({"id": "edit.copy"}));
+    assert!(d.app().session.state.layer_clipboard.is_empty());
+    // the graphic editor has focus: Copy / Paste / Duplicate act on the selected layer
+    d.ok("ui.set", json!({"focused": "Properties"}));
+    d.frames(2);
+    d.ok("ui.menu.invoke", json!({"id": "edit.copy"}));
+    assert_eq!(d.app().session.state.layer_clipboard.len(), 1);
+    d.ok("ui.menu.invoke", json!({"id": "edit.paste"}));
+    assert_eq!(count(&mut d), 3);
+    assert_eq!(d.app().session.state.graphic_layers, vec![2], "the pasted layer is selected");
+    d.ok("ui.menu.invoke", json!({"id": "edit.duplicate"}));
+    assert_eq!(count(&mut d), 4);
+    assert_eq!(d.app().session.state.graphic_layers, vec![3]);
+}

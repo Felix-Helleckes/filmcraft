@@ -530,6 +530,17 @@ pub fn invoke(app: &mut FilmcraftApp, ctx: &egui::Context, id: &str, mut params:
             app.dialog = Some(crate::Dialog::RevertConfirm);
             return Ok(json!({"dialog": "revert"}));
         }
+        // In the graphic editor (Properties / Essential Graphics) with a layer selected, Copy,
+        // Paste and Duplicate act on graphic layers, as in Premiere's graphics tools (#2264,
+        // #2265). Without a selected layer (or nothing copied, for Paste) they do what they always did.
+        "edit.copy" | "edit.paste" | "edit.duplicate" if params.as_object().is_none_or(|m| m.is_empty()) && graphic_layer_edit(app, id) => {
+            let cmd = match id {
+                "edit.copy" => "graphics.copyLayer",
+                "edit.paste" => "graphics.pasteLayer",
+                _ => "graphics.duplicateLayer",
+            };
+            return invoke(app, ctx, cmd, json!({}));
+        }
         // Files or an image on the system clipboard paste into the Timeline, or import into the
         // Project panel (#611). Copying clips puts their names there as text, so media copied
         // *after* them still wins; media that was already there when Copy/Cut ran is ignored so
@@ -629,6 +640,16 @@ fn put_clip_names_on_system_clipboard(app: &FilmcraftApp, ctx: &egui::Context) {
     }
     let text = names.join("\n");
     ctx.copy_text(if text.trim().is_empty() { format!("{} clips", names.len()) } else { text });
+}
+
+/// Whether Edit ▸ Copy / Paste / Duplicate (`id`) acts on graphic layers: the graphic editor has
+/// focus with a graphic clip selected, and a layer is selected (Copy, Duplicate) or layers were
+/// copied (Paste).
+fn graphic_layer_edit(app: &FilmcraftApp, id: &str) -> bool {
+    if !matches!(app.ui.focused, PanelKind::Properties | PanelKind::EssentialGraphics) || !crate::panels::graphics::graphic_selected(app) {
+        return false;
+    }
+    if id == "edit.paste" { !app.session.state.layer_clipboard.is_empty() } else { !app.session.state.graphic_layers.is_empty() }
 }
 
 /// Paste the files or the image on the system clipboard: placed on the Timeline when it has focus,

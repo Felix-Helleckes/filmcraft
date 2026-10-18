@@ -356,6 +356,10 @@ pub struct EditorState {
     /// Sequence markers copied with the clipboard clips (start relative to the copied range).
     #[serde(skip)]
     pub clipboard_markers: Vec<filmcraft_project::Marker>,
+    /// Graphic layers copied with `graphics.copyLayer`, back to front; `graphics.pasteLayer` adds
+    /// them to a graphic clip (#2264, #2265).
+    #[serde(skip)]
+    pub layer_clipboard: Vec<filmcraft_project::EffectInstance>,
     /// The last Edit ▸ Find… (Find Next continues it).
     #[serde(default)]
     pub find: Option<project_tools::FindState>,
