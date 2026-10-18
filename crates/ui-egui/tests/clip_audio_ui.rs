@@ -365,3 +365,36 @@ fn none_on_a_linked_pair_leaves_the_audio_clips_volume_line() {
     assert!(d.find(&line).is_none(), "None takes the video clip's line away");
     d.rect(&vol);
 }
+
+/// With an audio clip first in a mixed selection, Show Clip Keyframes still offers None, because
+/// the selection holds a video clip, and None still takes only the video clip's line away.
+#[test]
+fn none_is_offered_with_an_audio_clip_first_in_the_selection() {
+    let (mut d, pair) = Driver::demo(&[]);
+    d.ok("ui.set", json!({"timeline": {"videoTrackHeight": 90}}));
+    d.frames(3);
+    let vol = format!("timeline.clip.{}.volume", pair.audio);
+    let line = format!("timeline.clip.{}.keyframes", pair.video);
+    // give the video clip a line from its own menu
+    let vclip = d.rect(&format!("timeline.clip.{}", pair.video));
+    d.ok("ui.click", json!({"x": vclip[0] + vclip[2] * 0.5, "y": vclip[1] + 8.0, "button": "right"}));
+    d.frames(3);
+    d.click("timeline.clipMenu.clip.showKeyframes");
+    d.click("timeline.clipMenu.showKeyframes.opacity#0");
+    d.click("timeline.clipMenu.showKeyframes.opacity#0/opacity");
+    d.rect(&line);
+    // now with the audio clip first in the selection (as a Shift-click from the audio side
+    // leaves it): None is there and hides the video clip's line only
+    d.ok("engine.execute", json!({"command": "timeline.select", "params": {"clips": [pair.audio, pair.video]}}));
+    d.frames(2);
+    let order: Vec<u64> = d.harness.state().session.state.selection.iter().map(|c| c.0).collect();
+    assert_eq!(order.first(), Some(&pair.audio), "{order:?}");
+    let aclip = d.rect(&format!("timeline.clip.{}", pair.audio));
+    d.ok("ui.click", json!({"x": aclip[0] + aclip[2] * 0.5, "y": aclip[1] + 8.0, "button": "right"}));
+    d.frames(3);
+    d.click("timeline.clipMenu.clip.showKeyframes");
+    assert!(d.find("timeline.clipMenu.showKeyframes.none").is_some(), "None is offered for the selected video clip");
+    d.click("timeline.clipMenu.showKeyframes.none");
+    assert!(d.find(&line).is_none(), "None takes the video clip's line away");
+    d.rect(&vol);
+}

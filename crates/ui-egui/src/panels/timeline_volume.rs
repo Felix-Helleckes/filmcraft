@@ -471,11 +471,15 @@ pub fn menu(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, picked: &
         ui.add_enabled(false, egui::Button::new(tl!("Show Clip Keyframes")));
         return;
     };
-    let kind = seq.find_item(first.id).and_then(|(t, _)| seq.track(t)).map_or(TrackKind::Video, |t| t.kind);
+    let on_video = |it: &TrackItem| seq.find_item(it.id).and_then(|(t, _)| seq.track(t)).is_none_or(|t| t.kind == TrackKind::Video);
+    let kind = if on_video(first) { TrackKind::Video } else { TrackKind::Audio };
+    // None is offered when any picked clip is a video clip, not only when the first one is: a
+    // right-click on the audio half of a linked selection lists the audio clip first
+    let offers_none = picked.iter().any(|it| on_video(it));
     let shown = lane_for(app.ui.timeline.clip_lanes.get(&first.id.0).map(String::as_str), kind, first).map(|l| key_of(first, l.index, &l.param));
     let mut pick: Option<String> = None;
     let r = ui.menu_button(tl!("Show Clip Keyframes"), |ui| {
-        if kind == TrackKind::Video {
+        if offers_none {
             let label = tl!("None");
             let text = if shown.is_none() { format!("✓ {label}") } else { label.to_string() };
             let b = ui.button(text);
@@ -513,8 +517,7 @@ pub fn menu(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, picked: &
             // line, so only they take it. Linked Selection (on by default) puts a video clip's
             // linked audio clip in `picked` as well, and writing None there would take away a
             // line that the audio clip's own menu never offers to bring back.
-            let on_video = seq.find_item(it.id).and_then(|(t, _)| seq.track(t)).is_some_and(|t| t.kind == TrackKind::Video);
-            let applies = if key == NONE { on_video } else { index_of(it, &key).is_some() };
+            let applies = if key == NONE { on_video(it) } else { index_of(it, &key).is_some() };
             if applies {
                 app.ui.timeline.clip_lanes.insert(it.id.0, key.clone());
             }
