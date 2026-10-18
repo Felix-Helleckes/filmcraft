@@ -305,9 +305,10 @@ fn item_menu(app: &mut FilmcraftApp, ui: &mut egui::Ui, id: ItemId, kind: &ItemK
     }
     if matches!(kind, ItemKind::Media(m) if matches!(m.media, filmcraft_project::MediaRef::File { .. })) {
         ui.separator();
-        for (label, cmd) in [(tl!("Link Media…"), "media.linkMedia"), (tl!("Make Offline…"), "media.makeOffline")] {
+        // Make Offline… takes the selection; Link Media… lists every missing clip, whatever is selected
+        for (label, cmd, items) in [(tl!("Link Media…"), "media.linkMedia", sel()), (tl!("Make Offline…"), "media.makeOffline", all.clone())] {
             if ui.button(label).clicked() {
-                actions.push(("project.select".into(), all.clone()));
+                actions.push(("project.select".into(), items));
                 actions.push((cmd.into(), json!({})));
                 ui.close();
             }
