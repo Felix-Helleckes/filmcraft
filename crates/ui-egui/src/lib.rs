@@ -292,6 +292,8 @@ pub struct FilmcraftApp {
     control_rx: Option<Receiver<ControlRequest>>,
     /// One explicit panel reveal; consumed by the custom renderer, never repeated per frame.
     pub(crate) pending_panel_raise: Option<PanelKind>,
+    /// The workspace name and layout last handed to the engine for the project file (#2258).
+    pub(crate) project_layout_seen: Option<(String, dock::Layout)>,
     /// Explicit automation mode: native widget input and native menu commands are excluded.
     pub(crate) control_input_only: bool,
     /// Backend focus before synthetic input changes egui's effective focus for this frame.
@@ -555,6 +557,7 @@ impl FilmcraftApp {
             textures: HashMap::new(),
             control_rx: None,
             pending_panel_raise: None,
+            project_layout_seen: None,
             control_input_only: false,
             native_window_focused: None,
             synthetic_modifiers: egui::Modifiers::NONE,
@@ -1730,6 +1733,7 @@ impl FilmcraftApp {
         }
         self.sync_pool();
         self.apply_prefs(&ctx);
+        panels::workspaces::sync_project_layout(self);
         #[cfg(not(target_arch = "wasm32"))]
         self.tick_media_refresh(&ctx);
         for ev in self.session.drain_events() {

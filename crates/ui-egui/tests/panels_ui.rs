@@ -744,3 +744,51 @@ fn middle_closing_an_inactive_project_tab_keeps_the_inspector_target() {
     let source = d.app().ui.panels.inspector_source;
     assert_eq!(d.label("info.item"), name, "closing a tab must not select its stale item; focused={focused:?}, source={source:?}");
 }
+
+/// #2258: a saved project carries the panel layout; with Window ▸ Workspaces ▸ Import Workspace
+/// from Projects on, opening it shows that layout, off (the default) the layout stays. A layout
+/// that can't be read leaves the current one.
+#[test]
+fn a_project_reopens_in_its_saved_workspace_when_importing_is_on() {
+    let dir = std::env::temp_dir().join(format!("fc-ws-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("layout.fcproj").to_string_lossy().to_string();
+    let mut d = Driver::demo();
+    d.ok("ui.menu.invoke", json!({"id": "window.workspace.color"}));
+    d.frames(2);
+    let color = d.app().ui.dock.clone();
+    d.exec("file.saveAs", json!({"path": path}));
+    let saved: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    assert_eq!(saved["view"]["workspace"]["name"], "Color", "the file carries the layout");
+    // off (the default): opening keeps the layout on screen
+    d.ok("ui.menu.invoke", json!({"id": "window.workspace.editing"}));
+    d.frames(2);
+    let editing = d.app().ui.dock.clone();
+    assert_ne!(editing, color);
+    let checked = |d: &mut Driver| {
+        filmcraft_ui_egui::menus::menu_items(d.app()).into_iter().find(|it| it.id == "window.workspace.importFromProjects").and_then(|it| it.checked)
+    };
+    assert_eq!(checked(&mut d), Some(false));
+    d.exec("file.open", json!({"path": path}));
+    d.frames(2);
+    let app = d.app();
+    assert_eq!((app.ui.workspace.as_str(), &app.ui.dock), ("Editing", &editing));
+    // on: the project opens in its layout
+    d.ok("ui.menu.invoke", json!({"id": "window.workspace.importFromProjects"}));
+    assert_eq!(checked(&mut d), Some(true));
+    d.exec("file.open", json!({"path": path}));
+    d.frames(2);
+    let app = d.app();
+    assert_eq!((app.ui.workspace.as_str(), &app.ui.dock), ("Color", &color));
+    // a layout that can't be read is left alone
+    d.ok("ui.menu.invoke", json!({"id": "window.workspace.editing"}));
+    d.frames(2);
+    let mut broken = saved.clone();
+    broken["view"]["workspace"]["layout"] = json!({"Tabs": {"panels": ["NoSuchPanel"], "active": 7}});
+    std::fs::write(&path, serde_json::to_vec(&broken).unwrap()).unwrap();
+    d.exec("file.open", json!({"path": path}));
+    d.frames(2);
+    let app = d.app();
+    assert_eq!((app.ui.workspace.as_str(), &app.ui.dock), ("Editing", &editing));
+    let _ = std::fs::remove_dir_all(&dir);
+}
