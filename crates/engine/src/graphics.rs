@@ -1081,6 +1081,29 @@ pub fn commands() -> Vec<CommandSpec> {
             has_graphic,
             set_text_type,
         ),
+        spec(
+            "graphics.moveLayers",
+            "Move Graphic Layers",
+            &[],
+            None,
+            r#"{"clip":id?,"layers":[n]? (default: the selected layers),"delta":[dx,dy] (graphic pixels)}"#,
+            has_graphic,
+            |s, p| {
+                // #2186: several selected layers dragged together on the Program monitor move as one
+                // undo step, each keeping its place relative to the others (pinned layers keep
+                // following their targets from the new place, as with Align)
+                let clip = target_clip(s, p).ok_or_else(|| bad("graphics.moveLayers", "no graphic clip"))?;
+                let mut layers = layers_p(s, clip, p)?;
+                layers.sort_unstable();
+                layers.dedup();
+                let d =
+                    vec2_p(p, "delta").filter(|d| d.x.is_finite() && d.y.is_finite()).ok_or_else(|| bad("graphics.moveLayers", "need `delta`: [dx, dy]"))?;
+                let (boxes, _) = layer_boxes(s, clip, &layers)?;
+                let moves = boxes.into_iter().map(|(ei, own, _)| (ei, Vec2::new(own.x + d.x, own.y + d.y))).collect();
+                move_layers(s, clip, moves, "Move Graphic Layers")?;
+                Ok(json!({"clip": clip.0, "layers": layers}))
+            },
+        ),
         spec("graphics.selectLayer", "Select Graphic Layer", &[], None, r#"{"clip":id?,"layers":[n]}"#, has_graphic, |s, p| {
             let clip = target_clip(s, p).ok_or_else(|| bad("graphics.selectLayer", "no graphic clip"))?;
             let layers: Vec<usize> =

@@ -689,3 +689,33 @@ fn align_to_frame_moves_selected_video_clips_by_position_only() {
     s.execute("edit.undo", json!({})).unwrap();
     assert!((pos(&s).0.y - 200.0).abs() < 1e-6, "one undo step per alignment");
 }
+
+/// #2186: several layers move together by one delta, as one undo step, keeping their spacing.
+#[test]
+fn selected_layers_move_together_in_one_undo_step() {
+    let mut s = demo();
+    let clip = three_shapes(&mut s);
+    let before = layers(&s, ClipId(clip));
+    s.execute("graphics.selectLayer", json!({"clip": clip, "layers": [0, 2]})).unwrap();
+    let undo = s.history.undo.len();
+    let r = s.execute("graphics.moveLayers", json!({"clip": clip, "delta": [40, -25]})).unwrap();
+    assert_eq!(r["layers"], json!([0, 2]), "the selected layers by default");
+    let after = layers(&s, ClipId(clip));
+    for i in [0, 2] {
+        assert!((after[i].transform.position.x - before[i].transform.position.x - 40.0).abs() < 1e-9);
+        assert!((after[i].transform.position.y - before[i].transform.position.y + 25.0).abs() < 1e-9);
+    }
+    assert_eq!(after[1].transform.position, before[1].transform.position, "an unselected layer stays");
+    assert_eq!(s.history.undo.len(), undo + 1, "one undo step");
+    s.execute("edit.undo", json!({})).unwrap();
+    assert_eq!(
+        layers(&s, ClipId(clip)).iter().map(|l| l.transform.position).collect::<Vec<_>>(),
+        before.iter().map(|l| l.transform.position).collect::<Vec<_>>()
+    );
+    // explicit layers, duplicates ignored; bad deltas and layers are refused
+    s.execute("graphics.moveLayers", json!({"clip": clip, "layers": [1, 1], "delta": [10, 0]})).unwrap();
+    assert!((layers(&s, ClipId(clip))[1].transform.position.x - before[1].transform.position.x - 10.0).abs() < 1e-9);
+    assert!(s.execute("graphics.moveLayers", json!({"clip": clip, "layers": [0], "delta": [f64::MAX, "x"]})).is_err());
+    assert!(s.execute("graphics.moveLayers", json!({"clip": clip, "layers": [9], "delta": [1, 1]})).is_err());
+    assert!(s.execute("graphics.moveLayers", json!({"clip": clip, "layers": [0]})).is_err());
+}
