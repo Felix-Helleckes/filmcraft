@@ -323,7 +323,10 @@ fn item_menu(app: &mut FilmcraftApp, ui: &mut egui::Ui, id: ItemId, kind: &ItemK
                 let b = ui.button(label);
                 app.auto.add(&format!("project.itemMenu.proxy.{key}"), b.rect, label);
                 if b.clicked() {
-                    actions.push(("project.select".into(), all.clone()));
+                    // Attach Proxies… / Reconnect Full Resolution Media… work on one item (the first
+                    // selected): that is the clicked one
+                    let items = if matches!(cmd, "media.attachProxies" | "media.reconnectFullRes") { sel() } else { all.clone() };
+                    actions.push(("project.select".into(), items));
                     actions.push((cmd.into(), json!({})));
                     ui.close();
                 }
