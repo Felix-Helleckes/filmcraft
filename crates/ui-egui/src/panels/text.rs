@@ -165,8 +165,9 @@ fn captions(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
         x += 28.0;
     }
 
-    // ---- style strip
-    let style_h = 30.0;
+    // ---- style strip: one row, or two in a narrow panel (in one row its last controls ran past
+    // the panel's edge, where they could not be clicked)
+    let style_h = if rect.width() < STYLE_ONE_ROW_W { 58.0 } else { 30.0 };
     let style_rect = Rect::from_min_max(pos2(rect.min.x + 10.0, rect.max.y - style_h), pos2(rect.max.x - 10.0, rect.max.y - 2.0));
     style_strip(app, ui, style_rect, track_idx, &mut actions);
 
@@ -471,51 +472,91 @@ fn filmcraft_speech_available(app: &FilmcraftApp) -> bool {
     app.session.transcriber.is_some() || filmcraft_engine::transcript::speech_available()
 }
 
+/// A number field of the style strip whose drag is one change: the value being dragged is kept
+/// in memory under `key` (the strip rebuilds it from the track style every frame, so without that
+/// the release frame read back the old value and a drag changed nothing), and the value to set is
+/// returned once, when the drag ends or a typed value is entered. A drag ended by Escape keeps
+/// what the track had (#580).
+fn dragged_number(
+    ui: &mut egui::Ui,
+    key: egui::Id,
+    current: f64,
+    make: impl for<'a> FnOnce(&'a mut f64) -> egui::DragValue<'a>,
+) -> (egui::Response, Option<f64>) {
+    let mut v = ui.data(|d| d.get_temp::<f64>(key)).unwrap_or(current);
+    let resp = ui.add(make(&mut v));
+    if resp.dragged() && !resp.drag_stopped() {
+        ui.data_mut(|d| d.insert_temp(key, v));
+        return (resp, None);
+    }
+    ui.data_mut(|d| d.remove::<f64>(key));
+    let escaped = resp.drag_stopped() && ui.input(|i| i.key_pressed(egui::Key::Escape));
+    let commit = !escaped && (resp.drag_stopped() || (resp.changed() && !resp.dragged())) && v != current;
+    (resp, commit.then_some(v))
+}
+
+/// The width below which the caption style strip takes two rows.
+const STYLE_ONE_ROW_W: f32 = 680.0;
+
 fn style_strip(app: &mut FilmcraftApp, ui: &mut egui::Ui, r: Rect, track_idx: usize, actions: &mut Vec<(String, Value)>) {
     let Some(tr) = app.session.active_sequence().and_then(|q| q.caption_tracks.get(track_idx)).cloned() else { return };
-    let st = tr.style.clone();
+    let two_rows = r.height() > 40.0;
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(r).id_salt("caption-style"));
-    child.horizontal_centered(|ui| {
-        ui.spacing_mut().item_spacing.x = 6.0;
-        let r = egui::ComboBox::from_id_salt(("caption-font", tr.id.0)).selected_text(&st.font).width(130.0).height(400.0).show_ui(ui, |ui| {
-            if !filmcraft_text::fonts::system_scanned() {
-                filmcraft_text::fonts::scan_system();
-            }
-            // names starting with '.' are macOS-private system faces (UI/fallback fonts, some without a space glyph)
-            for (f, _) in filmcraft_text::families().into_iter().filter(|(f, _)| !f.starts_with('.')) {
-                let resp = ui.selectable_label(f.eq_ignore_ascii_case(&st.font), &f);
-                // An edge row may be only partly visible; automation must click its visible portion.
-                let visible = resp.rect.intersect(ui.clip_rect());
-                if visible.is_positive() {
-                    app.auto.add(&format!("text.captions.style.font.option.{f}"), visible, &f);
-                }
-                if resp.clicked() {
-                    actions.push(("captions.setStyle".into(), json!({"track": tr.id.0, "font": f})));
-                }
+    child.spacing_mut().item_spacing = vec2(6.0, 4.0);
+    child.vertical(|ui| {
+        ui.horizontal(|ui| {
+            style_look(app, ui, &tr, actions);
+            if !two_rows {
+                style_place(app, ui, &tr, actions);
             }
         });
-        app.auto.add("text.captions.style.font", r.response.rect, "Caption font");
-        let mut size = st.size;
-        let resp = ui.add(crate::widgets::number_drag(&mut size).range(8.0..=200.0).speed(0.5).suffix(" px"));
-        app.auto.add("text.captions.style.size", resp.rect, "Caption size");
-        // a drag ended by Escape keeps the size it had (#580)
-        let escaped = resp.drag_stopped() && ui.input(|i| i.key_pressed(egui::Key::Escape));
-        if !escaped && (resp.drag_stopped() || (resp.changed() && !resp.dragged())) {
-            actions.push(("captions.setStyle".into(), json!({"track": tr.id.0, "size": size})));
+        if two_rows {
+            ui.horizontal(|ui| style_place(app, ui, &tr, actions));
         }
-        let mut col = Color32::from_rgba_unmultiplied(st.color[0], st.color[1], st.color[2], st.color[3]);
-        let resp = egui::color_picker::color_edit_button_srgba(ui, &mut col, egui::color_picker::Alpha::Opaque);
-        app.auto.add("text.captions.style.color", resp.rect, "Text colour");
-        if resp.changed() {
-            let c = col.to_srgba_unmultiplied();
-            actions.push(("captions.setStyle".into(), json!({"track": tr.id.0, "color": c})));
+    });
+}
+
+/// Font, size, colour, box and alignment of the caption style strip.
+fn style_look(app: &mut FilmcraftApp, ui: &mut egui::Ui, tr: &filmcraft_project::CaptionTrack, actions: &mut Vec<(String, Value)>) {
+    let st = &tr.style;
+    let r = egui::ComboBox::from_id_salt(("caption-font", tr.id.0)).selected_text(&st.font).width(130.0).height(400.0).show_ui(ui, |ui| {
+        if !filmcraft_text::fonts::system_scanned() {
+            filmcraft_text::fonts::scan_system();
         }
-        let mut bg = st.background;
-        let resp = ui.checkbox(&mut bg, tl!("Box"));
-        app.auto.add("text.captions.style.background", resp.rect, "Background box");
-        if resp.changed() {
-            actions.push(("captions.setStyle".into(), json!({"track": tr.id.0, "background": bg})));
+        // names starting with '.' are macOS-private system faces (UI/fallback fonts, some without a space glyph)
+        for (f, _) in filmcraft_text::families().into_iter().filter(|(f, _)| !f.starts_with('.')) {
+            let resp = ui.selectable_label(f.eq_ignore_ascii_case(&st.font), &f);
+            // An edge row may be only partly visible; automation must click its visible portion.
+            let visible = resp.rect.intersect(ui.clip_rect());
+            if visible.is_positive() {
+                app.auto.add(&format!("text.captions.style.font.option.{f}"), visible, &f);
+            }
+            if resp.clicked() {
+                actions.push(("captions.setStyle".into(), json!({"track": tr.id.0, "font": f})));
+            }
         }
+    });
+    app.auto.add("text.captions.style.font", r.response.rect, "Caption font");
+    let key = egui::Id::new(("caption-size", tr.id.0));
+    let (resp, size) = dragged_number(ui, key, f64::from(st.size), |v| crate::widgets::number_drag(v).range(8.0..=200.0).speed(0.5).suffix(" px"));
+    app.auto.add("text.captions.style.size", resp.rect, "Caption size");
+    if let Some(size) = size {
+        actions.push(("captions.setStyle".into(), json!({"track": tr.id.0, "size": size})));
+    }
+    let mut col = Color32::from_rgba_unmultiplied(st.color[0], st.color[1], st.color[2], st.color[3]);
+    let resp = egui::color_picker::color_edit_button_srgba(ui, &mut col, egui::color_picker::Alpha::Opaque);
+    app.auto.add("text.captions.style.color", resp.rect, "Text colour");
+    if resp.changed() {
+        let c = col.to_srgba_unmultiplied();
+        actions.push(("captions.setStyle".into(), json!({"track": tr.id.0, "color": c})));
+    }
+    let mut bg = st.background;
+    let resp = ui.checkbox(&mut bg, tl!("Box"));
+    app.auto.add("text.captions.style.background", resp.rect, "Background box");
+    if resp.changed() {
+        actions.push(("captions.setStyle".into(), json!({"track": tr.id.0, "background": bg})));
+    }
+    ui.horizontal(|ui| {
         ui.label(egui::RichText::new(tl!("Align")).size(11.0).color(app.tokens.text_dim));
         for (a, icon_txt, name, tip) in [
             (CaptionAlign::Left, "L", "left", tl!("Align left")),
@@ -528,19 +569,34 @@ fn style_strip(app: &mut FilmcraftApp, ui: &mut egui::Ui, r: Rect, track_idx: us
                 actions.push(("captions.setStyle".into(), json!({"track": tr.id.0, "align": name})));
             }
         }
-        ui.label(egui::RichText::new(tl!("Position")).size(11.0).color(app.tokens.text_dim));
-        for (a, name, tip) in [
-            (CaptionAnchor::Top, "top", tl!("Position: top")),
-            (CaptionAnchor::Middle, "middle", tl!("Position: middle")),
-            (CaptionAnchor::Bottom, "bottom", tl!("Position: bottom")),
-        ] {
-            let resp = ui.selectable_label(st.anchor == a, name[..1].to_uppercase()).on_hover_text(tip);
-            app.auto.add(&format!("text.captions.style.anchor.{name}"), resp.rect, name);
-            if resp.clicked() {
-                actions.push(("captions.setStyle".into(), json!({"track": tr.id.0, "anchor": name})));
-            }
-        }
     });
+}
+
+/// Where the captions sit: the frame edge they anchor to and how far from it (#1364).
+fn style_place(app: &mut FilmcraftApp, ui: &mut egui::Ui, tr: &filmcraft_project::CaptionTrack, actions: &mut Vec<(String, Value)>) {
+    let st = &tr.style;
+    ui.label(egui::RichText::new(tl!("Position")).size(11.0).color(app.tokens.text_dim));
+    for (a, name, tip) in [
+        (CaptionAnchor::Top, "top", tl!("Position: top")),
+        (CaptionAnchor::Middle, "middle", tl!("Position: middle")),
+        (CaptionAnchor::Bottom, "bottom", tl!("Position: bottom")),
+    ] {
+        let resp = ui.selectable_label(st.anchor == a, name[..1].to_uppercase()).on_hover_text(tip);
+        app.auto.add(&format!("text.captions.style.anchor.{name}"), resp.rect, name);
+        if resp.clicked() {
+            actions.push(("captions.setStyle".into(), json!({"track": tr.id.0, "anchor": name})));
+        }
+    }
+    // how far from the anchored edge (a fraction of the frame height, shown in %): moves the
+    // captions up or down for footage whose lower third is busy (#1364)
+    let key = egui::Id::new(("caption-margin", tr.id.0));
+    let (resp, margin) =
+        dragged_number(ui, key, f64::from(st.margin) * 100.0, |v| crate::widgets::number_drag(v).range(0.0..=45.0).speed(0.2).max_decimals(1).suffix(" %"));
+    let resp = resp.on_hover_text(tl!("Distance from the top or bottom edge of the frame"));
+    app.auto.add("text.captions.style.margin", resp.rect, "Caption margin");
+    if let Some(margin) = margin {
+        actions.push(("captions.setStyle".into(), json!({"track": tr.id.0, "margin": margin / 100.0})));
+    }
 }
 
 fn run(app: &mut FilmcraftApp, ui: &egui::Ui, actions: Vec<(String, Value)>) {

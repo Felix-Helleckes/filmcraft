@@ -93,3 +93,61 @@ fn caption_font_picker_sets_the_track_font() {
     d.frames(3);
     assert_eq!(d.font(track), "Noto Serif");
 }
+
+/// The caption style strip sets how far the captions sit from the frame edge (#1364): a drag on
+/// the margin is one `captions.setStyle`, and the captions move in the picture.
+#[test]
+fn caption_margin_moves_the_captions() {
+    let mut d = Driver::demo();
+    d.ok("ui.set", json!({"workspace": "Captions and Graphics"}));
+    let track = d.ok("engine.execute", json!({"command": "captions.newTrack", "params": {"format": "Subtitle"}}))["track"].as_u64().unwrap();
+    d.ok("engine.execute", json!({"command": "playhead.set", "params": {"seconds": 1.0}}));
+    d.ok("engine.execute", json!({"command": "captions.add", "params": {"track": track, "text": "Hello", "durationSeconds": 2.0}}));
+    d.ok("ui.click", json!({"id": "text.tab.Captions"}));
+    d.frames(3);
+    let margin = |d: &mut Driver| -> f64 {
+        let r = d.ok("engine.execute", json!({"command": "captions.list", "params": {}}));
+        r["tracks"].as_array().unwrap().iter().find(|t| t["id"] == json!(track)).unwrap()["style"]["margin"].as_f64().unwrap()
+    };
+    let before = margin(&mut d);
+    assert!((before - 0.08).abs() < 1e-6, "{before}");
+    // the lowest caption row in the picture, before and after
+    let lowest = |d: &mut Driver| -> usize {
+        let s = &mut d.harness.state_mut().session;
+        let with = s.render_program(0.25).unwrap();
+        s.execute("captions.hideAll", json!({})).unwrap();
+        let without = s.render_program(0.25).unwrap();
+        s.execute("captions.showAll", json!({})).unwrap();
+        (0..with.h).rev().find(|y| (0..with.w * 4).any(|x| (with.px[y * with.w * 4 + x] - without.px[y * with.w * 4 + x]).abs() > 0.05)).unwrap()
+    };
+    let low0 = lowest(&mut d);
+    // every control of the style strip is inside the panel (in one row they ran past its edge)
+    let panel = d.ok("ui.elements", json!({"prefix": "panel.Text"}))[0]["rect"].clone();
+    let right = panel[0].as_f64().unwrap() + panel[2].as_f64().unwrap();
+    for e in d.ok("ui.elements", json!({"prefix": "text.captions.style."})).as_array().unwrap() {
+        let r: Vec<f64> = e["rect"].as_array().unwrap().iter().map(|x| x.as_f64().unwrap()).collect();
+        assert!(r[0] + r[2] <= right + 0.5, "{} ends at {} past the panel's {right}", e["id"], r[0] + r[2]);
+    }
+    let v = d.ok("ui.elements", json!({"prefix": "text.captions.style.margin"}));
+    let r: Vec<f64> = v[0]["rect"].as_array().unwrap().iter().map(|x| x.as_f64().unwrap()).collect();
+    let (cx, cy) = (r[0] + r[2] / 2.0, r[1] + r[3] / 2.0);
+    d.ok("ui.drag", json!({"from": {"x": cx, "y": cy}, "to": {"x": cx + 60.0, "y": cy}, "steps": 6}));
+    d.frames(3);
+    let after = margin(&mut d);
+    assert!(after > before + 0.05, "{before} -> {after}");
+    let low1 = lowest(&mut d);
+    assert!(low1 + 10 < low0, "bottom-anchored captions moved up: {low0} -> {low1}");
+    // the size field next to it: a drag sets the size it ends on (it read back the old one)
+    let size = |d: &mut Driver| -> f64 {
+        let r = d.ok("engine.execute", json!({"command": "captions.list", "params": {}}));
+        r["tracks"].as_array().unwrap().iter().find(|t| t["id"] == json!(track)).unwrap()["style"]["size"].as_f64().unwrap()
+    };
+    let s0 = size(&mut d);
+    let v = d.ok("ui.elements", json!({"prefix": "text.captions.style.size"}));
+    let r: Vec<f64> = v[0]["rect"].as_array().unwrap().iter().map(|x| x.as_f64().unwrap()).collect();
+    let (cx, cy) = (r[0] + r[2] / 2.0, r[1] + r[3] / 2.0);
+    d.ok("ui.drag", json!({"from": {"x": cx, "y": cy}, "to": {"x": cx - 30.0, "y": cy}, "steps": 6}));
+    d.frames(3);
+    let s1 = size(&mut d);
+    assert!(s1 < s0 - 5.0, "{s0} -> {s1}");
+}
