@@ -350,6 +350,12 @@ fn copy_and_paste_a_transition() {
     }
     s.execute("edit.undo", json!({})).unwrap();
     assert_eq!(s.active_sequence().unwrap().video_tracks[0].transitions, before);
+    // still one undo step with a one-entry history
+    let limit = std::mem::replace(&mut s.history.limit, 1);
+    s.execute("edit.paste", json!({})).unwrap();
+    s.execute("edit.undo", json!({})).unwrap();
+    assert_eq!(s.active_sequence().unwrap().video_tracks[0].transitions, before, "undo with a one-entry history");
+    s.history.limit = limit;
     // nothing to paste at: an error, not a clip paste
     s.state.selection.clear();
     s.state.edit_points.clear();

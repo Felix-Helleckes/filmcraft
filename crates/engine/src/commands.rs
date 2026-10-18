@@ -3676,24 +3676,26 @@ fn copy_transition(s: &mut Session) -> Result<Value> {
 /// of its track kind (as Apply Video / Audio Transition does), with the copied settings. One undo step.
 fn paste_transition(s: &mut Session) -> Result<Value> {
     let Some((kind, tr)) = s.state.transition_clipboard.clone() else { return Err(EngineError::Other("clipboard is empty".into())) };
-    let n0 = s.history.undo.len();
     let frames = s.sequence_rate().frame_at(tr.duration).max(1);
     let p = json!({"effect": tr.effect.effect, "frames": frames, "reverse": tr.reverse});
-    let r = crate::sequence_extras::apply_to_selection(s, &p, kind)?.ok_or_else(|| {
-        EngineError::Other(format!("select {} edit points or clips to paste the transition at", if kind == TrackKind::Video { "video" } else { "audio" }))
-    })?;
-    // the copied parameters (keyframes included) replace the defaults
-    let ids: Vec<TransitionId> = r["transitions"].as_array().map(|a| a.iter().filter_map(|v| v.as_u64().map(TransitionId)).collect()).unwrap_or_default();
-    s.edit_sequence("Paste", |q, _, _| {
-        for t in q.video_tracks.iter_mut().chain(q.audio_tracks.iter_mut()) {
-            for x in t.transitions.iter_mut().filter(|x| ids.contains(&x.id)) {
-                x.effect = tr.effect.clone();
+    // applying and then setting the copied parameters is one history transaction, whatever the
+    // undo limit
+    s.edit_group("Paste", |s| {
+        let r = crate::sequence_extras::apply_to_selection(s, &p, kind)?.ok_or_else(|| {
+            EngineError::Other(format!("select {} edit points or clips to paste the transition at", if kind == TrackKind::Video { "video" } else { "audio" }))
+        })?;
+        // the copied parameters (keyframes included) replace the defaults
+        let ids: Vec<TransitionId> = r["transitions"].as_array().map(|a| a.iter().filter_map(|v| v.as_u64().map(TransitionId)).collect()).unwrap_or_default();
+        s.edit_sequence("Paste", |q, _, _| {
+            for t in q.video_tracks.iter_mut().chain(q.audio_tracks.iter_mut()) {
+                for x in t.transitions.iter_mut().filter(|x| ids.contains(&x.id)) {
+                    x.effect = tr.effect.clone();
+                }
             }
-        }
-        Ok(())
-    })?;
-    crate::clip_ops::collapse_history(s, n0, "Paste");
-    Ok(r)
+            Ok(())
+        })?;
+        Ok(r)
+    })
 }
 
 fn paste(s: &mut Session, insert: bool) -> Result<Value> {
