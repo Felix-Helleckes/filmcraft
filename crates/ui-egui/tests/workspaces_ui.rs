@@ -172,6 +172,7 @@ fn save_switch_reset_rename_delete_and_restart() {
             "Effects",
             "Learning",
             "Review",
+            "Vertical",
             "Reset to Saved Layout",
             "Save Changes to this Workspace",
             "Save as New Workspace…",
@@ -277,4 +278,35 @@ fn save_rename_and_delete_through_the_dialogs() {
     d.click("workspaces.edit.close");
     assert!(d.app().ui.workspace_dialog.is_none(), "Close closes the dialog");
     let _ = std::fs::remove_dir_all(&data);
+}
+
+/// Window ▸ Workspaces ▸ Vertical (#1247): a layout for 9:16 editing. The Program monitor runs
+/// the full height of the window in a column taller than it is wide, the Timeline keeps its own
+/// full-height column beside it, and Effect Controls sits under the Timeline.
+#[test]
+fn the_vertical_workspace_gives_a_portrait_picture_the_full_height() {
+    let data = data_dir("vertical");
+    let mut d = Driver::launch(&data);
+    d.menu("window.workspace.vertical", json!({}));
+    d.frames(4);
+    assert_eq!(d.workspace(), "Vertical");
+    let rect = |d: &mut Driver, id: &str| -> [f64; 4] {
+        let v = d.ok("ui.elements", json!({"prefix": id}));
+        let e = v.as_array().unwrap().iter().find(|e| e["id"] == json!(id)).unwrap_or_else(|| panic!("no {id}: {v}")).clone();
+        let r: Vec<f64> = e["rect"].as_array().unwrap().iter().map(|x| x.as_f64().unwrap()).collect();
+        [r[0], r[1], r[2], r[3]]
+    };
+    let program = rect(&mut d, "panel.Program");
+    let timeline = rect(&mut d, "panel.Timeline");
+    let controls = rect(&mut d, "panel.EffectControls");
+    let project = rect(&mut d, "panel.Project");
+    assert!(program[3] > program[2] * 1.3, "the Program column is portrait: {program:?}");
+    assert!(program[3] > 800.0, "and runs the window's height: {program:?}");
+    assert!(project[0] + project[2] <= program[0] + 1.0, "the bins are left of it");
+    assert!(timeline[0] >= program[0] + program[2] - 1.0, "the Timeline is right of it: {timeline:?}");
+    assert!(timeline[2] > program[2], "and wider: {timeline:?}");
+    assert!(controls[1] >= timeline[1] + timeline[3] - 1.0 && (controls[0] - timeline[0]).abs() < 80.0, "Effect Controls under the Timeline: {controls:?}");
+    let names: Vec<String> = d.workspaces_menu().into_iter().map(|(l, _)| l).collect();
+    assert!(names.contains(&"Vertical".to_string()), "{names:?}");
+    d.snapshot("vertical");
 }

@@ -177,7 +177,8 @@ fn vsplit(size: SplitSize, a: DockNode, b: DockNode) -> DockNode {
     DockNode::Split { vertical: true, size, a: Box::new(a), b: Box::new(b) }
 }
 
-pub const WORKSPACES: [&str; 9] = ["Editing", "Assembly", "Color", "Effects", "Audio", "Captions and Graphics", "Learning", "Review", "All Panels"];
+pub const WORKSPACES: [&str; 10] =
+    ["Editing", "Assembly", "Color", "Effects", "Audio", "Captions and Graphics", "Vertical", "Learning", "Review", "All Panels"];
 
 /// The user's workspaces file, beside `preferences.json` in the data directory.
 pub const WORKSPACES_FILE: &str = "workspaces.json";
@@ -357,6 +358,19 @@ pub fn workspace(name: &str) -> DockNode {
                 hsplit(Ratio(0.3), tabs(&[Project, MediaBrowser, Libraries], 0), bottom_editing()),
             ),
             tabs(&[EssentialGraphics, Properties], 0),
+        ),
+        // 9:16 editing (Shorts, Reels, TikTok; #1247): a portrait picture needs height, not width,
+        // so the Program monitor runs the full height of the window in a narrow column between
+        // the bins and the Timeline, which keeps the full height of its own column with Effect
+        // Controls and color under it.
+        "Vertical" => hsplit(
+            Ratio(0.2),
+            vsplit(Ratio(0.5), tabs(&[Project, MediaBrowser, Libraries, Effects, Markers, History], 0), tabs(&[Source, AudioClipMixer, Metadata, Info], 0)),
+            hsplit(
+                Ratio(0.34),
+                tabs(&[Program], 0),
+                vsplit(Ratio(0.58), bottom_editing(), tabs(&[EffectControls, Properties, LumetriColor, EssentialGraphics, Text, LumetriScopes], 0)),
+            ),
         ),
         "All Panels" => vsplit(
             Ratio(0.5),
