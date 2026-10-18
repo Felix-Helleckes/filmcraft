@@ -638,6 +638,27 @@ pub(crate) fn param_row(
             if drop.clicked() {
                 app.ui.eyedropper = if armed { None } else { Some(target) };
             }
+            // `#rrggbb`, for the colour you already know: a green screen's published value, a
+            // brand colour, one read off another shot. While the field has focus it shows what is
+            // typed, even when that isn't a colour yet (one character into `#00ff00`); each valid
+            // colour is applied as it comes, and leaving shows the kept one again. Same handling
+            // as the hex field in Settings ▸ Appearance.
+            let hex_id = id.with("hex");
+            let mut text = vui.data(|m| m.get_temp::<String>(hex_id)).unwrap_or_else(|| filmcraft_color::to_hex([c[0], c[1], c[2], 1.0]));
+            let h = vui.add(egui::TextEdit::singleline(&mut text).desired_width(70.0).font(egui::TextStyle::Monospace));
+            app.auto.add(&format!("effectControls.{}.{}.hex", e.effect, pkey), h.rect, "Hex");
+            if h.has_focus() {
+                vui.data_mut(|m| m.insert_temp(hex_id, text.clone()));
+            } else {
+                vui.data_mut(|m| m.remove::<String>(hex_id));
+            }
+            if h.changed()
+                && let Some(v) = filmcraft_color::parse_hex(&text)
+            {
+                // The swatch is `Alpha::Opaque`, so a typed colour leaves this parameter's alpha
+                // alone, whether six digits were typed or eight.
+                set = Some(json!([v[0], v[1], v[2], c[3]]));
+            }
         }
         (ParamKind::Path, _) => {
             crate::panels::masks::path_value(app, &mut vui, clip, idx, mask, actions);
