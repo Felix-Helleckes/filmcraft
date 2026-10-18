@@ -10,7 +10,9 @@ version 2; version 1 projects open with no caption tracks).
   `CEA-608`, `CEA-708`, `Teletext`), language, output eye (shown in the Program monitor and
   burned in on export), lock, sync lock, and a **track style**:
   font size (pixels at 1080 lines, scaled to the frame), text colour, background box and its colour,
-  outline width and colour, alignment (left/centre/right), position (top/middle/bottom) and
+  outline width and colour, a drop shadow behind the text (colour, opacity, angle, distance, size
+  and blur, as on graphic text; off by default), alignment (left/centre/right), position
+  (top/middle/bottom) and
   margin (a fraction of the frame height, default 0.08; `captions.setStyle` clamps it to 0–0.45),
   line spacing.
 - **Caption**: in/out in exact `Tick`s, text (lines separated by `\n`; `<i>`, `<b>`, `<u>` kept
@@ -49,7 +51,7 @@ Details of each format and the SCC encoder are in [`crates/captions/README.md`](
 | `captions.delete` | Edit ▸ Clear / Ripple Delete with captions selected | `captions`, `ripple` |
 | `captions.select`, `captions.goTo` | click / number button | `captions`, `add` / `caption` |
 | `captions.setTrack` | caption track header (eye, lock) | `track`, `name`, `format`, `language`, `enabled`, `locked`, `syncLock` |
-| `captions.setStyle` | Text panel style strip | `track`, `size`, `color`, `background`, `backgroundColor`, `outline`, `outlineColor`, `align`, `anchor`, `margin`, `lineSpacing`, `reset` |
+| `captions.setStyle` | Text panel style strip | `track`, `size`, `color`, `background`, `backgroundColor`, `outline`, `outlineColor`, `shadow`, `shadowColor`, `shadowOpacity` (0–100), `shadowAngle` (degrees, 135 = down right), `shadowDistance`, `shadowSize`, `shadowBlur` (pixels at 1080 lines), `align`, `anchor`, `margin`, `lineSpacing`, `reset` |
 | `captions.deleteTrack` | | `track` |
 | `captions.import` / `captions.export` | File ▸ Export ▸ Captions… | `path`, `format`, `track`, `dropFrame` |
 | `captions.list` | (query) | `track` — tracks, styles and captions with timecodes (a `track` that names no caption track is an error) |

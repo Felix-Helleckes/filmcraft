@@ -138,6 +138,42 @@ fn caption_commands_need_tracks_and_navigate() {
     assert!(s.active_sequence().unwrap().caption_tracks.is_empty());
 }
 
+/// The caption drop shadow (#2322): set through `captions.setStyle`, bounded, listed, undoable and
+/// kept by save / open.
+#[test]
+fn caption_drop_shadow_is_set_listed_and_saved() {
+    let mut s = demo();
+    s.execute("captions.newTrack", json!({})).unwrap();
+    s.execute("captions.add", json!({"text": "Shadowed", "durationSeconds": 1.0})).unwrap();
+    assert!(!s.active_sequence().unwrap().caption_tracks[0].style.shadow, "off by default");
+    let params = json!({"track": "C1", "shadow": true, "shadowColor": "#336699cc", "shadowOpacity": 60, "shadowAngle": -45, "shadowDistance": 9, "shadowSize": 2, "shadowBlur": 5});
+    s.execute("captions.setStyle", params).unwrap();
+    let st = s.active_sequence().unwrap().caption_tracks[0].style.clone();
+    assert!(st.shadow);
+    assert_eq!(st.shadow_color, [0x33, 0x66, 0x99, 0xcc]);
+    assert_eq!((st.shadow_opacity, st.shadow_angle, st.shadow_distance, st.shadow_size, st.shadow_blur), (60.0, 315.0, 9.0, 2.0, 5.0));
+    let list = s.execute("captions.list", json!({})).unwrap();
+    let style = &list["tracks"][0]["style"];
+    assert_eq!((style["shadow"].as_bool(), style["shadowColor"].as_str(), style["shadowDistance"].as_f64()), (Some(true), Some("#336699cc"), Some(9.0)));
+    // out-of-range values are clamped, not stored
+    s.execute("captions.setStyle", json!({"track": "C1", "shadowOpacity": 900, "shadowDistance": -3, "shadowSize": 1e9, "shadowBlur": 1e9})).unwrap();
+    let st = s.active_sequence().unwrap().caption_tracks[0].style.clone();
+    assert_eq!((st.shadow_opacity, st.shadow_distance, st.shadow_size, st.shadow_blur), (100.0, 0.0, 100.0, 200.0));
+    // save / open keeps it
+    let dir = std::env::temp_dir().join(format!("fc-cap-shadow-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let proj = dir.join("shadow.fcproj").to_string_lossy().to_string();
+    s.execute("file.saveAs", json!({"path": proj})).unwrap();
+    s.execute("file.open", json!({"path": proj})).unwrap();
+    assert_eq!(s.active_sequence().unwrap().caption_tracks[0].style, st);
+    // one undo step per change; resetting the style turns the shadow off again
+    s.execute("captions.setStyle", json!({"track": "C1", "reset": true})).unwrap();
+    assert!(!s.active_sequence().unwrap().caption_tracks[0].style.shadow);
+    s.execute("edit.undo", json!({})).unwrap();
+    assert_eq!(s.active_sequence().unwrap().caption_tracks[0].style, st);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn caption_list_track_filter_never_falls_back_to_every_track() {
     let mut s = demo();

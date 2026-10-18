@@ -301,6 +301,28 @@ fn upgrade_caption_to_graphic() {
     assert_eq!(s.execute("captions.list", json!({})).unwrap()["tracks"][0]["captions"].as_array().unwrap().len(), before);
 }
 
+/// A caption track's drop shadow (#2322) comes along when a caption is upgraded to a graphic.
+#[test]
+fn upgrade_caption_keeps_the_drop_shadow() {
+    let mut s = demo("gt-caption-shadow");
+    s.execute("captions.add", json!({"text": "Shadowed", "seconds": 600, "durationSeconds": 2})).unwrap();
+    s.execute(
+        "captions.setStyle",
+        json!({"track": "C1", "shadow": true, "shadowColor": "#ff000080", "shadowOpacity": 50, "shadowAngle": 90, "shadowDistance": 10}),
+    )
+    .unwrap();
+    let r = s.execute("graphics.upgradeCaption", json!({})).unwrap();
+    let c = ClipId(r["clips"][0].as_u64().unwrap());
+    let it = item(&s, c);
+    let layer = it.effects.iter().find(|e| e.effect == "graphic_text").unwrap();
+    let p = |k: &str| layer.params[k].value.clone();
+    assert_eq!(p("shadow"), ParamValue::Bool(true));
+    assert_eq!(p("shadow_angle"), ParamValue::Float(90.0));
+    let ParamValue::Float(opacity) = p("shadow_opacity") else { panic!() };
+    assert!((opacity - 50.0 * 128.0 / 255.0).abs() < 1e-6, "the colour's alpha folds into the opacity: {opacity}");
+    assert_eq!(p("shadow_color"), ParamValue::Color([1.0, 0.0, 0.0, 1.0]));
+}
+
 #[test]
 fn source_graphics_share_edits() {
     let mut s = demo("gt-source");

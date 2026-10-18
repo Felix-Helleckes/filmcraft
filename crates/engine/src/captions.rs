@@ -192,6 +192,9 @@ fn track_json(s: &Session, t: &CaptionTrack, index: usize) -> Value {
             "background": t.style.background, "backgroundColor": hex(t.style.background_color),
             "align": format!("{:?}", t.style.align).to_lowercase(), "anchor": format!("{:?}", t.style.anchor).to_lowercase(),
             "margin": t.style.margin, "lineSpacing": t.style.line_spacing, "outline": t.style.outline, "outlineColor": hex(t.style.outline_color),
+            "shadow": t.style.shadow, "shadowColor": hex(t.style.shadow_color), "shadowOpacity": t.style.shadow_opacity,
+            "shadowAngle": t.style.shadow_angle, "shadowDistance": t.style.shadow_distance, "shadowSize": t.style.shadow_size,
+            "shadowBlur": t.style.shadow_blur,
         },
         "captions": t.captions.iter().map(|c| caption_json(s, c)).collect::<Vec<_>>(),
     })
@@ -296,7 +299,7 @@ pub fn commands() -> Vec<CommandSpec> {
             "Caption Track Style",
             &[],
             None,
-            r##"{"track":id|"C1","font":str?,"size":f32?,"color":"#rrggbb[aa]"?,"background":bool?,"backgroundColor":"#rrggbbaa"?,"align":"left|center|right"?,"anchor":"top|middle|bottom"?,"margin":0..0.45 (fraction of frame height)?,"lineSpacing":f32?,"outline":f32?,"outlineColor":str?,"reset":bool?}"##,
+            r##"{"track":id|"C1","font":str?,"size":f32?,"color":"#rrggbb[aa]"?,"background":bool?,"backgroundColor":"#rrggbbaa"?,"align":"left|center|right"?,"anchor":"top|middle|bottom"?,"margin":0..0.45 (fraction of frame height)?,"lineSpacing":f32?,"outline":f32?,"outlineColor":str?,"shadow":bool?,"shadowColor":"#rrggbb[aa]"?,"shadowOpacity":0..100?,"shadowAngle":deg?,"shadowDistance":0..200?,"shadowSize":0..100?,"shadowBlur":0..200?,"reset":bool?}"##,
             has_caption_track,
             |s, p| {
                 let tid = track_param(s, p).ok_or_else(|| {
@@ -336,6 +339,26 @@ pub fn commands() -> Vec<CommandSpec> {
                     }
                     if let Some(v) = f64_p(&p, "outline") {
                         y.outline = (v as f32).clamp(0.0, 40.0);
+                    }
+                    // drop shadow (#2322), with graphic text's controls and ranges
+                    if let Some(b) = bool_p(&p, "shadow") {
+                        y.shadow = b;
+                    }
+                    if let Some(c) = p.get("shadowColor").and_then(parse_color) {
+                        y.shadow_color = c;
+                    }
+                    for (key, field, max) in [
+                        ("shadowOpacity", &mut y.shadow_opacity, 100.0),
+                        ("shadowDistance", &mut y.shadow_distance, 200.0),
+                        ("shadowSize", &mut y.shadow_size, 100.0),
+                        ("shadowBlur", &mut y.shadow_blur, 200.0),
+                    ] {
+                        if let Some(v) = f64_p(&p, key) {
+                            *field = (v as f32).clamp(0.0, max);
+                        }
+                    }
+                    if let Some(v) = f64_p(&p, "shadowAngle") {
+                        y.shadow_angle = v.rem_euclid(360.0) as f32;
                     }
                     if let Some(v) = f64_p(&p, "margin") {
                         y.margin = (v as f32).clamp(0.0, 0.45);

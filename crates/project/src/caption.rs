@@ -93,6 +93,21 @@ pub struct CaptionStyle {
     /// Text outline width in pixels at 1080 lines (0 = none).
     pub outline: f32,
     pub outline_color: [u8; 4],
+    /// Drop shadow behind the text and its outline (not the background box), with graphic text's
+    /// controls: colour, opacity, angle, distance, size and blur.
+    pub shadow: bool,
+    /// Shadow colour, sRGB + alpha.
+    pub shadow_color: [u8; 4],
+    /// Shadow opacity in percent (0–100), applied on top of the colour's alpha.
+    pub shadow_opacity: f32,
+    /// Direction the shadow falls in degrees, as in Premiere: 135° is down and to the right.
+    pub shadow_angle: f32,
+    /// How far the shadow is offset, in pixels at 1080 lines.
+    pub shadow_distance: f32,
+    /// How far the shadow spreads beyond the text, in pixels at 1080 lines.
+    pub shadow_size: f32,
+    /// Shadow softness (blur radius), in pixels at 1080 lines.
+    pub shadow_blur: f32,
 }
 
 impl Default for CaptionStyle {
@@ -109,6 +124,13 @@ impl Default for CaptionStyle {
             line_spacing: 1.25,
             outline: 0.0,
             outline_color: [0, 0, 0, 255],
+            shadow: false,
+            shadow_color: [0, 0, 0, 255],
+            shadow_opacity: 75.0,
+            shadow_angle: 135.0,
+            shadow_distance: 4.0,
+            shadow_size: 0.0,
+            shadow_blur: 6.0,
         }
     }
 }

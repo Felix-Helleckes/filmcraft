@@ -1,7 +1,7 @@
 //! Caption layout and burn-in.
 //!
 //! [`overlay`] lays out the caption showing on a track at a time with the track's
-//! [`CaptionStyle`] (size relative to a 1080-line frame, colour, background box, outline,
+//! [`CaptionStyle`] (size relative to a 1080-line frame, colour, background box, outline, drop shadow,
 //! alignment, anchor and margin; WebVTT `line:N%` and `align:` cue settings override the style)
 //! and rasterises it into a small premultiplied linear-light RGBA [`Overlay`] positioned in the
 //! frame. Renderers composite overlays over the finished picture.
@@ -149,7 +149,9 @@ pub fn render_caption(c: &Caption, style: &CaptionStyle, w: usize, h: usize) -> 
         })
         .collect();
     let outline = (style.outline * scale).max(0.0);
-    let grow = outline.ceil() + 1.0;
+    let shadow = shadow_geometry(style, scale);
+    // the overlay also holds the shadow: its offset, spread and blur on every side
+    let grow = outline.ceil() + 1.0 + shadow.map_or(0.0, |s| (s.dx.abs().max(s.dy.abs()) + s.size + s.blur).ceil());
     let bx0 = xs.iter().zip(&widths).map(|(x, _)| x - pad_x - grow).fold(f32::MAX, f32::min).floor();
     let bx1 = xs.iter().zip(&widths).map(|(x, lw)| x + lw + pad_x + grow).fold(f32::MIN, f32::max).ceil();
     let by0 = (top - grow).floor();
@@ -180,7 +182,9 @@ pub fn render_caption(c: &Caption, style: &CaptionStyle, w: usize, h: usize) -> 
         cover = m.a;
     }
     let stroke = if outline > 0.0 { dilate(&cover, ow, oh, outline) } else { Vec::new() };
+    let shade = shadow.map(|s| shadow_mask(&cover, &stroke, ow, oh, s)).unwrap_or_default();
     let (tc, bc, oc) = (lin(style.color), lin(style.background_color), lin(style.outline_color));
+    let sc = shadow.map_or([0.0; 4], |s| lin(style.shadow_color).map(|c| c * s.opacity));
     let mut out = vec![0.0f32; ow * oh * 4];
     for j in 0..ow * oh {
         let mut p = [0.0f32; 4];
@@ -192,6 +196,9 @@ pub fn render_caption(c: &Caption, style: &CaptionStyle, w: usize, h: usize) -> 
             }
         };
         over(&mut p, bc, bg[j]);
+        if let Some(&a) = shade.get(j) {
+            over(&mut p, sc, a);
+        }
         if !stroke.is_empty() {
             over(&mut p, oc, stroke[j]);
         }
@@ -199,6 +206,200 @@ pub fn render_caption(c: &Caption, style: &CaptionStyle, w: usize, h: usize) -> 
         out[j * 4..j * 4 + 4].copy_from_slice(&p);
     }
     Some(Overlay { x: ox, y: oy, w: ow, h: oh, px: out })
+}
+
+/// A caption shadow in overlay pixels: offset, spread, blur radius and opacity (0–1).
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct ShadowGeometry {
+    dx: f32,
+    dy: f32,
+    size: f32,
+    blur: f32,
+    opacity: f32,
+}
+
+/// The track's shadow at `scale` (frame height / 1080), or None when it is off or invisible. The
+/// values come from project files and commands, so each is bounded here: a NaN or a huge distance
+/// must not size the overlay.
+fn shadow_geometry(style: &CaptionStyle, scale: f32) -> Option<ShadowGeometry> {
+    let bounded = |v: f32, max: f32| if v.is_finite() { v.clamp(0.0, max) } else { 0.0 };
+    let opacity = bounded(style.shadow_opacity, 100.0) / 100.0;
+    if !style.shadow || opacity <= 0.0 || style.shadow_color[3] == 0 {
+        return None;
+    }
+    // Premiere (and graphic text): 135° casts the shadow down and to the right.
+    let angle = if style.shadow_angle.is_finite() { (style.shadow_angle - 90.0).to_radians() } else { std::f32::consts::FRAC_PI_4 };
+    let d = bounded(style.shadow_distance, 200.0) * scale;
+    Some(ShadowGeometry {
+        dx: angle.cos() * d,
+        dy: angle.sin() * d,
+        size: bounded(style.shadow_size, 100.0) * scale,
+        blur: bounded(style.shadow_blur, 200.0) * scale,
+        opacity,
+    })
+}
+
+/// The shadow's coverage: the text with its outline, grown by `size`, softened by `blur` and moved
+/// by the offset (sampled bilinearly, so a fractional distance stays smooth).
+fn shadow_mask(cover: &[f32], stroke: &[f32], w: usize, h: usize, s: ShadowGeometry) -> Vec<f32> {
+    let mut m: Vec<f32> = cover.iter().enumerate().map(|(j, &c)| c.max(stroke.get(j).copied().unwrap_or(0.0))).collect();
+    // both in time linear in the overlay, whatever the size and blur (a disc or Gaussian kernel of
+    // the allowed radii would cost hundreds of taps per pixel)
+    if s.size > 0.0 {
+        m = spread(&m, w, h, s.size);
+    }
+    if s.blur > 0.0 {
+        m = soften(&m, w, h, s.blur);
+    }
+    let at = |x: i64, y: i64| -> f32 {
+        if x < 0 || y < 0 || x >= w as i64 || y >= h as i64 {
+            return 0.0;
+        }
+        m.get(y as usize * w + x as usize).copied().unwrap_or(0.0)
+    };
+    let mut out = vec![0.0f32; w * h];
+    for y in 0..h {
+        for x in 0..w {
+            let (sx, sy) = (x as f32 - s.dx, y as f32 - s.dy);
+            let (x0, y0) = (sx.floor(), sy.floor());
+            let (fx, fy) = (sx - x0, sy - y0);
+            let (x0, y0) = (x0 as i64, y0 as i64);
+            let top = at(x0, y0) * (1.0 - fx) + at(x0 + 1, y0) * fx;
+            let bottom = at(x0, y0 + 1) * (1.0 - fx) + at(x0 + 1, y0 + 1) * fx;
+            if let Some(v) = out.get_mut(y * w + x) {
+                *v = (top * (1.0 - fy) + bottom * fy).clamp(0.0, 1.0);
+            }
+        }
+    }
+    out
+}
+
+/// Grow a coverage mask by `r` pixels with round corners: the distance from each pixel to the
+/// shape (an exact Euclidean distance transform of the half-covered pixels) against `r`, with a
+/// one-pixel ramp so the edge stays anti-aliased.
+fn spread(m: &[f32], w: usize, h: usize, r: f32) -> Vec<f32> {
+    let d2 = distance_squared(m, w, h);
+    m.iter().zip(&d2).map(|(&c, &d)| c.max((r + 0.5 - d.sqrt()).clamp(0.0, 1.0))).collect()
+}
+
+/// Squared distance to the nearest pixel with coverage ≥ 0.5 (infinite for an empty mask), by
+/// Felzenszwalb and Huttenlocher's two-pass lower-envelope method.
+fn distance_squared(m: &[f32], w: usize, h: usize) -> Vec<f32> {
+    const FAR: f32 = 1e20;
+    let mut g: Vec<f32> = m.iter().map(|&c| if c >= 0.5 { 0.0 } else { FAR }).collect();
+    let mut line = Vec::new();
+    for x in 0..w {
+        line.clear();
+        line.extend((0..h).map(|y| g.get(y * w + x).copied().unwrap_or(FAR)));
+        for (y, v) in edt_1d(&line).into_iter().enumerate() {
+            if let Some(d) = g.get_mut(y * w + x) {
+                *d = v;
+            }
+        }
+    }
+    for y in 0..h {
+        let row = g.get(y * w..(y + 1) * w).map(<[f32]>::to_vec).unwrap_or_default();
+        for (x, v) in edt_1d(&row).into_iter().enumerate() {
+            if let Some(d) = g.get_mut(y * w + x) {
+                *d = v;
+            }
+        }
+    }
+    g
+}
+
+/// One dimension of the distance transform: `out[q] = min_p (q - p)² + f[p]`.
+fn edt_1d(f: &[f32]) -> Vec<f32> {
+    let n = f.len();
+    let mut out = vec![1e20f32; n];
+    // parabola vertices and the boundaries between them
+    let mut v = vec![0usize; n.max(1)];
+    let mut z = vec![0.0f32; n + 1];
+    let mut k = 0usize;
+    let value = |q: usize| f.get(q).copied().unwrap_or(1e20);
+    let Some(first) = (0..n).find(|&q| value(q) < 1e20) else { return out };
+    v[0] = first;
+    z[0] = f32::NEG_INFINITY;
+    z[1] = f32::INFINITY;
+    for q in first + 1..n {
+        if value(q) >= 1e20 {
+            continue;
+        }
+        loop {
+            let p = v[k];
+            let s = ((value(q) + (q * q) as f32) - (value(p) + (p * p) as f32)) / (2.0 * (q as f32 - p as f32));
+            if s <= z[k] && k > 0 {
+                k -= 1;
+                continue;
+            }
+            if s <= z[k] {
+                // k == 0: the new parabola is lower everywhere
+                v[0] = q;
+                z[1] = f32::INFINITY;
+                break;
+            }
+            k += 1;
+            v[k] = q;
+            z[k] = s;
+            z[k + 1] = f32::INFINITY;
+            break;
+        }
+    }
+    let mut j = 0usize;
+    for (q, o) in out.iter_mut().enumerate() {
+        while z.get(j + 1).is_some_and(|&b| b < q as f32) {
+            j += 1;
+        }
+        let p = v[j];
+        let d = q as f32 - p as f32;
+        *o = d * d + value(p);
+    }
+    out
+}
+
+/// Soften a coverage mask: three box blurs in each direction, close to a Gaussian with σ = r / 2,
+/// in time independent of `r` (running sums). Edges read as empty.
+fn soften(m: &[f32], w: usize, h: usize, r: f32) -> Vec<f32> {
+    let sigma = r / 2.0;
+    // the box half-width whose three passes have the Gaussian's variance: 3·((2b+1)² − 1)/12 = σ²
+    let b = (((4.0 * sigma * sigma + 1.0).sqrt() - 1.0) / 2.0).round().max(1.0) as usize;
+    let mut cur = m.to_vec();
+    let mut line: Vec<f32> = Vec::new();
+    for _ in 0..3 {
+        for y in 0..h {
+            line.clear();
+            line.extend((0..w).map(|x| cur.get(y * w + x).copied().unwrap_or(0.0)));
+            for (x, v) in box_1d(&line, b).into_iter().enumerate() {
+                if let Some(d) = cur.get_mut(y * w + x) {
+                    *d = v;
+                }
+            }
+        }
+        for x in 0..w {
+            line.clear();
+            line.extend((0..h).map(|y| cur.get(y * w + x).copied().unwrap_or(0.0)));
+            for (y, v) in box_1d(&line, b).into_iter().enumerate() {
+                if let Some(d) = cur.get_mut(y * w + x) {
+                    *d = v;
+                }
+            }
+        }
+    }
+    cur
+}
+
+/// Mean over `[i - b, i + b]` (outside the line counts as 0), by a running sum.
+fn box_1d(f: &[f32], b: usize) -> Vec<f32> {
+    let n = f.len();
+    let at = |i: isize| if i >= 0 { f.get(i as usize).copied().unwrap_or(0.0) } else { 0.0 };
+    let width = (2 * b + 1) as f32;
+    let mut sum: f32 = (0..=b as isize).map(at).sum();
+    let mut out = Vec::with_capacity(n);
+    for i in 0..n as isize {
+        out.push(sum / width);
+        sum += at(i + b as isize + 1) - at(i - b as isize);
+    }
+    out
 }
 
 /// Max-filter a coverage mask with a disc of radius `r`.
@@ -324,6 +525,79 @@ mod tests {
         let st = CaptionStyle { background: false, outline: 4.0, outline_color: [255, 0, 0, 255], ..Default::default() };
         let o = render_caption(&cap("O"), &st, 1920, 1080).unwrap();
         assert!(o.px.chunks(4).any(|p| p[0] > 0.9 && p[1] < 0.05 && p[3] > 0.9), "red outline pixels");
+    }
+
+    /// Opaque pixels of an overlay as frame coordinates, with their premultiplied colour.
+    fn opaque(o: &Overlay) -> Vec<(i32, i32, [f32; 4])> {
+        (0..o.h)
+            .flat_map(|y| (0..o.w).map(move |x| (x, y)))
+            .filter_map(|(x, y)| {
+                let p = o.px.get((y * o.w + x) * 4..(y * o.w + x) * 4 + 4)?;
+                (p[3] > 0.5).then(|| (o.x + x as i32, o.y + y as i32, [p[0], p[1], p[2], p[3]]))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn drop_shadow_falls_down_and_right_behind_the_text() {
+        let plain = CaptionStyle { background: false, ..Default::default() };
+        let off = render_caption(&cap("I"), &plain, 1920, 1080).unwrap();
+        // shadow off (the default) draws exactly what it drew before the shadow existed
+        let toggled_off = CaptionStyle { shadow: false, shadow_distance: 50.0, shadow_blur: 80.0, ..plain.clone() };
+        assert_eq!(render_caption(&cap("I"), &toggled_off, 1920, 1080).unwrap(), off);
+        let st = CaptionStyle { shadow: true, shadow_color: [255, 0, 0, 255], shadow_opacity: 100.0, shadow_distance: 12.0, shadow_blur: 0.0, ..plain };
+        let on = render_caption(&cap("I"), &st, 1920, 1080).unwrap();
+        let red: Vec<_> = opaque(&on).into_iter().filter(|(_, _, p)| p[0] > 0.9 && p[1] < 0.05).collect();
+        assert!(!red.is_empty(), "red shadow pixels");
+        let text = opaque(&off);
+        let centre = |v: &[(i32, i32, [f32; 4])]| {
+            let n = v.len().max(1) as f32;
+            (v.iter().map(|p| p.0 as f32).sum::<f32>() / n, v.iter().map(|p| p.1 as f32).sum::<f32>() / n)
+        };
+        let ((tx, ty), (sx, sy)) = (centre(&text), centre(&red));
+        // 135° at 12 px: about 8.5 px right and 8.5 px down (minus what the text covers)
+        assert!(sx > tx + 4.0 && sy > ty + 4.0, "text at {tx},{ty}, shadow at {sx},{sy}");
+        // the text stays on top: where it fully covers, it is still white (its anti-aliased edge
+        // blends with the shadow behind it, as it would with anything behind it)
+        let at = |o: &Overlay, x: i32, y: i32| {
+            let (lx, ly) = ((x - o.x) as usize, (y - o.y) as usize);
+            o.px.get((ly * o.w + lx) * 4..(ly * o.w + lx) * 4 + 4).map(|p| [p[0], p[1], p[2], p[3]]).unwrap_or([0.0; 4])
+        };
+        let solid: Vec<_> = text.iter().filter(|(_, _, p)| p[3] > 0.99).collect();
+        assert!(!solid.is_empty());
+        assert!(solid.iter().all(|(x, y, _)| at(&on, *x, *y)[1] > 0.95), "the shadow is drawn over the text");
+    }
+
+    #[test]
+    fn shadow_spread_is_round_and_blur_keeps_the_coverage() {
+        // one covered pixel in the middle of a 21×21 mask
+        let (w, h) = (21usize, 21usize);
+        let mut m = vec![0.0f32; w * h];
+        m[10 * w + 10] = 1.0;
+        let s = spread(&m, w, h, 4.0);
+        let at = |v: &[f32], x: usize, y: usize| v[y * w + x];
+        assert_eq!(at(&s, 14, 10), 0.5, "4 px out along an axis: on the anti-aliased edge");
+        assert_eq!(at(&s, 13, 10), 1.0);
+        assert_eq!(at(&s, 16, 10), 0.0);
+        // round, not square: the diagonal at distance 4 (≈ 2.83, 2.83) is in, the corner (4, 4) is out
+        assert!(at(&s, 13, 13) > 0.0 && at(&s, 14, 14) == 0.0);
+        // the blur spreads the coverage without losing it (nothing reaches the mask's edges)
+        let b = soften(&s, w, h, 3.0);
+        let (before, after): (f32, f32) = (s.iter().sum(), b.iter().sum());
+        assert!((before - after).abs() < 1e-3 * before, "{before} → {after}");
+        assert!(at(&b, 10, 10) < 1.0 && at(&b, 16, 10) > 0.0);
+        // an empty mask stays empty
+        assert!(spread(&vec![0.0; w * h], w, h, 3.0).iter().all(|v| *v == 0.0));
+    }
+
+    #[test]
+    fn drop_shadow_values_from_a_file_are_bounded() {
+        for (d, s, b) in [(f32::NAN, f32::INFINITY, f32::NAN), (1e9, 1e9, 1e9), (-50.0, -1.0, -3.0)] {
+            let st = CaptionStyle { shadow: true, shadow_distance: d, shadow_size: s, shadow_blur: b, shadow_angle: f32::NAN, ..Default::default() };
+            let o = render_caption(&cap("Hi"), &st, 1920, 1080).unwrap();
+            assert!(o.w < 1920 + 1200 && o.h < 1080 + 1200, "{d} {s} {b}: {}x{}", o.w, o.h);
+            assert!(o.px.iter().all(|v| v.is_finite()));
+        }
     }
 
     #[test]

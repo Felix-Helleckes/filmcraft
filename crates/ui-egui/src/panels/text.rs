@@ -516,6 +516,14 @@ fn style_strip(app: &mut FilmcraftApp, ui: &mut egui::Ui, r: Rect, track_idx: us
         if resp.changed() {
             actions.push(("captions.setStyle".into(), json!({"track": tr.id.0, "background": bg})));
         }
+        // drop shadow (#2322): on/off here; colour, opacity, angle, distance, size and blur through
+        // captions.setStyle
+        let mut shadow = st.shadow;
+        let resp = ui.checkbox(&mut shadow, tl!("Shadow"));
+        app.auto.add("text.captions.style.shadow", resp.rect, "Drop shadow");
+        if resp.changed() {
+            actions.push(("captions.setStyle".into(), json!({"track": tr.id.0, "shadow": shadow})));
+        }
         ui.label(egui::RichText::new(tl!("Align")).size(11.0).color(app.tokens.text_dim));
         for (a, icon_txt, name, tip) in [
             (CaptionAlign::Left, "L", "left", tl!("Align left")),

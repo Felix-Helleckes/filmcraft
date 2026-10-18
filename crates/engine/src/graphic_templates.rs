@@ -905,6 +905,17 @@ fn upgrade_caption(s: &mut Session, p: &Value) -> Result<Value> {
             set(&mut layer, "stroke_color", ParamValue::Color(col(st.outline_color)));
             set(&mut layer, "stroke_width", ParamValue::Float(st.outline as f64 * k));
         }
+        if st.shadow {
+            // the caption shadow's controls are graphic text's (#2322); the colour's alpha folds into the opacity
+            let opacity = st.shadow_opacity.clamp(0.0, 100.0) as f64 * st.shadow_color[3] as f64 / 255.0;
+            set(&mut layer, "shadow", ParamValue::Bool(true));
+            set(&mut layer, "shadow_color", ParamValue::Color(col(st.shadow_color)));
+            set(&mut layer, "shadow_opacity", ParamValue::Float(opacity));
+            set(&mut layer, "shadow_angle", ParamValue::Float(st.shadow_angle as f64));
+            set(&mut layer, "shadow_distance", ParamValue::Float(st.shadow_distance as f64 * k));
+            set(&mut layer, "shadow_size", ParamValue::Float(st.shadow_size as f64 * k));
+            set(&mut layer, "shadow_blur", ParamValue::Float(st.shadow_blur as f64 * k));
+        }
         if !runs.is_empty() {
             layer.layer = Some(Box::new(LayerExtra { runs, ..Default::default() }));
         }
