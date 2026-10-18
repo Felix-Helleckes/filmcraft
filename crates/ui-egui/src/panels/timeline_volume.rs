@@ -509,7 +509,13 @@ pub fn menu(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, picked: &
     app.auto.add("timeline.clipMenu.clip.showKeyframes", r.response.rect, "Show Clip Keyframes");
     if let Some(key) = pick {
         for it in picked {
-            if key == NONE || index_of(it, &key).is_some() {
+            // None is offered for video clips only, since an audio clip always shows its Volume
+            // line, so only they take it. Linked Selection (on by default) puts a video clip's
+            // linked audio clip in `picked` as well, and writing None there would take away a
+            // line that the audio clip's own menu never offers to bring back.
+            let on_video = seq.find_item(it.id).and_then(|(t, _)| seq.track(t)).is_some_and(|t| t.kind == TrackKind::Video);
+            let applies = if key == NONE { on_video } else { index_of(it, &key).is_some() };
+            if applies {
                 app.ui.timeline.clip_lanes.insert(it.id.0, key.clone());
             }
         }

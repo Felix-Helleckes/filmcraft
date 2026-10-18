@@ -334,3 +334,34 @@ fn show_clip_keyframes_picks_the_line_of_a_clip() {
     assert!(param_of(&d.item(pair.audio), "panner", "balance").0 > 1.0, "dragging up pans right");
     assert_eq!(param_of(&d.item(pair.audio), "volume", "level").0, level);
 }
+
+/// Show Clip Keyframes ▸ None is offered for video clips only, so with Linked Selection on — its
+/// default — it must leave the linked audio clip's Volume line alone. That clip's own menu never
+/// offers None, so a line taken away there is one the user has to know to pick back by name.
+#[test]
+fn none_on_a_linked_pair_leaves_the_audio_clips_volume_line() {
+    let (mut d, pair) = Driver::demo(&[]);
+    d.ok("ui.set", json!({"timeline": {"videoTrackHeight": 90}}));
+    d.frames(3);
+    let vol = format!("timeline.clip.{}.volume", pair.audio);
+    let line = format!("timeline.clip.{}.keyframes", pair.video);
+    d.rect(&vol);
+
+    // right-click the video clip, which selects its linked audio clip too, and give it a line
+    let clip = d.rect(&format!("timeline.clip.{}", pair.video));
+    let menu = |d: &mut Driver| {
+        d.ok("ui.click", json!({"x": clip[0] + clip[2] * 0.5, "y": clip[1] + 8.0, "button": "right"}));
+        d.frames(3);
+        d.click("timeline.clipMenu.clip.showKeyframes");
+    };
+    menu(&mut d);
+    d.click("timeline.clipMenu.showKeyframes.opacity#0");
+    d.click("timeline.clipMenu.showKeyframes.opacity#0/opacity");
+    d.rect(&line);
+
+    // ▸ None takes the video clip's line away and nothing else
+    menu(&mut d);
+    d.click("timeline.clipMenu.showKeyframes.none");
+    assert!(d.find(&line).is_none(), "None takes the video clip's line away");
+    d.rect(&vol);
+}
