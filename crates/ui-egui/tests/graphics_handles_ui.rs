@@ -357,6 +357,34 @@ fn text_committed_by_an_input_method_is_typed_on_the_monitor() {
     assert_eq!(list["layers"][0]["text"], "A你好");
 }
 
+/// #2445: Korean commits a syllable only when the next one starts, and the text being composed
+/// was never shown, so typing Korean on the monitor seemed to do nothing, and the last syllable was
+/// lost when the edit ended. The composing text now shows at the caret and is kept when the edit
+/// ends.
+#[test]
+fn korean_being_composed_shows_and_is_kept_when_the_edit_ends() {
+    let mut d = Driver::new();
+    d.ok("ui.set", json!({"tool": "Type"}));
+    d.frames(3);
+    let pic = d.rect("program.picture");
+    d.ok("ui.click", json!({"x": pic[0] + pic[2] * 0.3, "y": pic[1] + pic[3] * 0.2}));
+    d.ok("ui.type", json!({"text": "A"}));
+    // 한 composed from ㅎ, 하, 한, then 국 started: 한 is committed, 구 shows
+    let preedit = |text: &str| egui::Event::Ime(egui::ImeEvent::Preedit { text: text.into(), active_range_chars: None });
+    d.harness.input_mut().events.extend([preedit("ㅎ"), preedit("하"), preedit("한")]);
+    d.frames(3);
+    let shown = d.ok("ui.elements", json!({"prefix": "program.textEdit.preedit"}));
+    assert_eq!(shown[0]["label"], "한", "the syllable being composed shows: {shown}");
+    d.harness.input_mut().events.extend([egui::Event::Ime(egui::ImeEvent::Commit("한".into())), preedit("구")]);
+    d.frames(3);
+    assert_eq!(d.exec("graphics.list", json!({}))["layers"][0]["text"], "A한");
+    // Escape ends the edit: the syllable still being composed is kept
+    d.ok("ui.key", json!({"key": "Escape"}));
+    d.frames(3);
+    assert!(d.harness.state().ui.gfx_edit.is_none());
+    assert_eq!(d.exec("graphics.list", json!({}))["layers"][0]["text"], "A한구");
+}
+
 #[test]
 fn text_properties_switches_between_point_and_paragraph_text() {
     let mut d = Driver::new();
