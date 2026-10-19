@@ -1358,7 +1358,9 @@ mod tests {
             // every theme family falls back to the craft-fonts (when built with them; no system
             // font is added then) or to the system Japanese font
             for family in crate::theme::font_families() {
-                let stack = fonts.definitions().families.get(&family).cloned().unwrap_or_default();
+                let mut stack = fonts.definitions().families.get(&family).cloned().unwrap_or_default();
+                // installed faces craft-fonts doesn't have (Hebrew, Hangul) come after the CJK ones
+                stack.retain(|n| !crate::rtl::is_system_face(n) && n != "system-korean");
                 if craft {
                     assert!(stack.last().is_some_and(|n| n.starts_with("craft:")), "{family:?}: {stack:?}");
                     assert!(!stack.iter().any(|n| n == JAPANESE_FONT), "{family:?}: {stack:?}");
