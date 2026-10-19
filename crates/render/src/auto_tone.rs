@@ -64,7 +64,7 @@ fn percentile(sorted: &[f32], q: f32) -> f32 {
 
 /// Solve Auto for `img` (the clip's picture before its Lumetri, working linear light). `base` is
 /// the clip's Lumetri instance (Input LUT and HDR White are read from it).
-pub fn solve(img: &Image, base: &EffectInstance, working: WorkingSpace, project: Option<&Project>, white_balance: bool) -> AutoTone {
+pub fn solve(img: &Image, base: &EffectInstance, working: WorkingSpace, project: Option<&Project>, white_balance: bool) -> Option<AutoTone> {
     let img = shrink(img, 192);
     let white = if base.param("hdr_white").is_some() { base.f64_at("hdr_white", Tick::ZERO) as f32 } else { filmcraft_color::grade::DEFAULT_HDR_WHITE_NITS };
     let gs = GradeSpace::new(working, white);
@@ -89,8 +89,9 @@ pub fn solve(img: &Image, base: &EffectInstance, working: WorkingSpace, project:
             }
         })
         .collect();
+    // too little picture to judge: no correction at all, rather than a "correction" of zeros
     if px.len() < 16 {
-        return AutoTone::default();
+        return None;
     }
     let mut out = AutoTone::default();
 
@@ -152,7 +153,7 @@ pub fn solve(img: &Image, base: &EffectInstance, working: WorkingSpace, project:
         out.blacks = -b0 / 0.15 * 100.0;
         out.whites = (1.0 - w0) / 0.15 * 100.0;
     }
-    out
+    Some(out)
 }
 
 #[cfg(test)]
@@ -228,7 +229,7 @@ mod tests {
     #[test]
     fn auto_neutralises_the_cast_lifts_the_exposure_and_stretches_the_range() {
         let img = dull_blue_ramp();
-        let a = solve(&img, &lumetri(), WorkingSpace::Rec709, None, true);
+        let a = solve(&img, &lumetri(), WorkingSpace::Rec709, None, true).unwrap();
         assert!(a.temperature > 5.0, "a blue cast is warmed: {a:?}");
         assert!(a.exposure > 0.3, "a dim shot is brightened: {a:?}");
         assert!(a.blacks < 0.0 && a.whites > 0.0, "a flat shot is stretched: {a:?}");
@@ -244,7 +245,7 @@ mod tests {
 
     #[test]
     fn white_balance_can_be_left_alone() {
-        let a = solve(&dull_blue_ramp(), &lumetri(), WorkingSpace::Rec709, None, false);
+        let a = solve(&dull_blue_ramp(), &lumetri(), WorkingSpace::Rec709, None, false).unwrap();
         assert_eq!((a.temperature, a.tint), (0.0, 0.0));
         assert!(a.exposure > 0.3);
     }
@@ -255,7 +256,7 @@ mod tests {
         for p in img.px.as_chunks_mut::<4>().0 {
             p[0] *= 0.2;
         }
-        let a = solve(&img, &lumetri(), WorkingSpace::Rec709, None, true);
+        let a = solve(&img, &lumetri(), WorkingSpace::Rec709, None, true).unwrap();
         assert!(a.temperature.abs() <= MAX_WB && a.tint.abs() <= MAX_WB, "{a:?}");
     }
 
@@ -271,7 +272,7 @@ mod tests {
                 img.px[i..i + 4].copy_from_slice(&[v, v * 0.35, v * 0.08, 1.0]);
             }
         }
-        let a = solve(&img, &lumetri(), WorkingSpace::Rec709, None, true);
+        let a = solve(&img, &lumetri(), WorkingSpace::Rec709, None, true).unwrap();
         assert_eq!((a.temperature, a.tint), (0.0, 0.0), "{a:?}");
     }
 
@@ -286,8 +287,15 @@ mod tests {
                 img.px[i..i + 4].copy_from_slice(&[v, v, v, 1.0]);
             }
         }
-        let a = solve(&img, &lumetri(), WorkingSpace::Rec709, None, true);
+        let a = solve(&img, &lumetri(), WorkingSpace::Rec709, None, true).unwrap();
         assert!(a.blacks <= 0.0 && a.whites >= 0.0, "never compresses: {a:?}");
         assert!(a.temperature.abs() < 1.0 && a.tint.abs() < 1.0, "a neutral frame keeps its balance: {a:?}");
+    }
+
+    /// #2378 review: too few pixels to judge give no correction, not a "correction" of zeros.
+    #[test]
+    fn too_little_picture_solves_nothing() {
+        let img = Image::new(3, 3);
+        assert!(solve(&img, &lumetri(), WorkingSpace::Rec709, None, true).is_none());
     }
 }

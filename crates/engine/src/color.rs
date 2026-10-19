@@ -493,11 +493,16 @@ fn auto_basic(s: &mut Session, p: &Value) -> Result<Value> {
         let t = if it.range().contains(ph) { ph } else { it.start + filmcraft_time::Tick(it.duration.0 / 2) };
         let Some(base) = it.effects.iter().find(|e| e.effect == "lumetri").cloned().or_else(fresh) else { continue };
         let Some(img) = filmcraft_render::render_clip(&probe, seq_id, clip, t, opts, &provider) else { continue };
-        solved.push((clip, filmcraft_render::auto_tone::solve(&img, &base, working, Some(&s.project), white_balance)));
+        // too little picture to judge: that clip is left as it was
+        if let Some(a) = filmcraft_render::auto_tone::solve(&img, &base, working, Some(&s.project), white_balance) {
+            solved.push((clip, a));
+        }
     }
     if solved.is_empty() {
-        return Err(bad(CMD, "none of the clips has a picture"));
+        return Err(bad(CMD, "none of the clips has enough picture to correct"));
     }
+    // HDR working spaces: Auto leaves Whites alone (the solver can't tell "keep" from "0" there)
+    let hdr = filmcraft_color::GradeSpace::new(working, filmcraft_color::grade::DEFAULT_HDR_WHITE_NITS).is_hdr();
     let label = if solved.len() == 1 { "Auto Color Correction".to_string() } else { format!("Auto Color Correction ({} clips)", solved.len()) };
     s.edit_sequence(&label, |q, _, _| {
         for (clip, a) in &solved {
@@ -513,8 +518,10 @@ fn auto_basic(s: &mut Session, p: &Value) -> Result<Value> {
                 }
             };
             let e = &mut it.effects[idx];
-            let mut values =
-                vec![("exposure", a.exposure), ("contrast", 0.0), ("highlights", 0.0), ("shadows", 0.0), ("whites", a.whites), ("blacks", a.blacks)];
+            let mut values = vec![("exposure", a.exposure), ("contrast", 0.0), ("highlights", 0.0), ("shadows", 0.0), ("blacks", a.blacks)];
+            if !hdr {
+                values.push(("whites", a.whites));
+            }
             if white_balance {
                 values.extend([("temperature", a.temperature), ("tint", a.tint)]);
             }

@@ -334,3 +334,19 @@ fn auto_color_correction_does_the_whole_sequence_in_one_step() {
     assert_eq!(pictured.iter().map(|c| temperature(&s, *c)).collect::<Vec<_>>(), had, "one undo step");
     assert!(s.execute("lumetri.autoBasic", json!({"scope": "everything"})).is_err());
 }
+
+/// #2378 review: in an HDR working space Auto leaves Whites as the user set it (the solver only
+/// grades it in SDR), and still sets the other Basic values.
+#[test]
+fn auto_basic_keeps_whites_in_hdr() {
+    let mut s = demo();
+    s.execute("sequence.colorSettings", json!({"workingSpace": "Rec. 2100 PQ"})).unwrap();
+    let clip = s.active_sequence().unwrap().video_tracks[0].items[0].id.0;
+    s.execute("timeline.select", json!({"clips": [clip]})).unwrap();
+    s.execute("effects.apply", json!({"clips": [clip], "effect": "lumetri"})).unwrap();
+    s.execute("effects.setParam", json!({"clip": clip, "effect": "lumetri", "param": "whites", "value": 25.0})).unwrap();
+    s.execute("lumetri.autoBasic", json!({})).unwrap();
+    let it = s.active_sequence().unwrap().find_item(filmcraft_project::ClipId(clip)).unwrap().1.clone();
+    let l = it.effect("lumetri").unwrap();
+    assert_eq!(l.param("whites").unwrap().value.as_f64(), Some(25.0), "Whites untouched in HDR");
+}
