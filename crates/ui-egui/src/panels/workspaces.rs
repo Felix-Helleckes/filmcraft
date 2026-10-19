@@ -180,7 +180,14 @@ fn splice(items: &mut Vec<MenuItem>, prefs: &dock::WorkspacePrefs, session: &fil
 /// Every frame (#2258): keep the layout the next save stores in the project file up to date, and
 /// show the layout a just-opened project was saved with when Import Workspace from Projects is on.
 pub fn sync_project_layout(app: &mut FilmcraftApp) {
-    if let Some(raw) = app.session.state.opened_workspace_layout.take()
+    let opened = app.session.state.opened_workspace_layout.take();
+    if opened.is_some() {
+        // a project was just opened: the engine now carries its saved layout, so the live one is
+        // written again whether or not it changes (#2456 review: with import off, the file's old
+        // layout would otherwise be saved back)
+        app.project_layout_seen = None;
+    }
+    if let Some(raw) = opened
         && app.workspaces.import_from_projects
     {
         match serde_json::from_value::<dock::SavedWorkspace>(raw).ok().and_then(|saved| Some((dock::read_saved(&saved)?, saved.name))) {

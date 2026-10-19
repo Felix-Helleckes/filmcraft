@@ -773,6 +773,8 @@ fn a_project_reopens_in_its_saved_workspace_when_importing_is_on() {
     d.frames(2);
     let app = d.app();
     assert_eq!((app.ui.workspace.as_str(), &app.ui.dock), ("Editing", &editing));
+    // and the next save stores the layout on screen, not the file's old one (#2456 review)
+    assert_eq!(app.session.state.workspace_layout.as_ref().map(|w| w["name"].clone()), Some(json!("Editing")));
     // on: the project opens in its layout
     d.ok("ui.menu.invoke", json!({"id": "window.workspace.importFromProjects"}));
     assert_eq!(checked(&mut d), Some(true));
