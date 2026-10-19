@@ -218,6 +218,10 @@ impl MediaSource for AnimatedSource {
     fn audio(&self, _start: i64, _frames: usize, _sample_rate: u32) -> Result<AudioBuffer> {
         Err(MediaError::NoStream("audio"))
     }
+
+    fn resident_bytes(&self) -> u64 {
+        self.frames.iter().map(|f| f.byte_size() as u64).fold(0, u64::saturating_add)
+    }
 }
 
 #[cfg(test)]
