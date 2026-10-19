@@ -170,7 +170,7 @@ pub trait MediaSource: Send + Sync {
     /// Memory this source keeps for as long as it is open, in bytes: the decoded picture of a
     /// still, the frames of an animated image. Sources that decode on demand keep next to nothing
     /// and report 0. The media pool closes the least recently used sources past its budget by
-    /// this (#2469).
+    /// this (#2469), asking while it holds its locks: keep it cheap (no decoding, no scans).
     fn resident_bytes(&self) -> u64 {
         0
     }
