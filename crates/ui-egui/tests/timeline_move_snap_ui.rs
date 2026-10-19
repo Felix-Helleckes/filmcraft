@@ -86,3 +86,33 @@ fn a_linked_partners_inner_edge_snaps_while_moving() {
     assert_eq!(rate.frame_at(a.start), 100, "the audio's start snapped to the playhead (video at {})", rate.frame_at(v.start));
     assert_eq!(a.start - v.start, rate.tick_of(12), "the pair moved together");
 }
+
+/// With two edges in reach of different snap points, the nearer one decides: the inner audio start
+/// lands exactly on the playhead while the block's start is a frame (4 px) from a marker. Before,
+/// the block's start won whenever it was in reach.
+#[test]
+fn the_nearest_of_several_edges_in_reach_wins() {
+    let mut d = Driver::demo();
+    d.exec("file.newSequence", json!({"name": "Snap", "video": 1, "audio": 1}));
+    let session = &d.harness.state().session;
+    let item = session.project.items.values().find(|i| i.has_video() && i.has_audio() && i.as_media().is_some()).unwrap().id;
+    let rate = session.sequence_rate();
+    d.exec("timeline.place", json!({"item": item.0, "frame": 0, "duration": rate.tick_of(48).0}));
+    let q = d.harness.state().session.active_sequence().unwrap().clone();
+    let (video, audio) = (q.video_tracks[0].items[0].clone(), q.audio_tracks[0].items[0].clone());
+    d.harness.state_mut().session.state.linked_selection = false;
+    d.exec("timeline.trim", json!({"clip": audio.id.0, "edge": "in", "deltaFrames": 12}));
+    d.harness.state_mut().session.state.linked_selection = true;
+    // a marker one frame past where the video's start lands, the playhead exactly where the audio's does
+    d.exec("markers.add", json!({"target": "program", "time": rate.tick_of(91).0}));
+    d.exec("playhead.set", json!({"frame": 102}));
+    d.ok("ui.set", json!({"timeline": {"pps": 96.0, "scroll": 0.0}}));
+    d.frames(3);
+    let r = d.rect(&format!("timeline.clip.{}", video.id.0));
+    let (x, y) = (r[0] + r[2] * 0.5, r[1] + r[3] * 0.5);
+    d.ok("ui.drag", json!({"from": {"x": x, "y": y}, "to": {"x": x + 90.0 * 4.0, "y": y}, "steps": 12}));
+    d.frames(3);
+    let q = d.harness.state().session.active_sequence().unwrap().clone();
+    let (a, v) = (q.find_item(audio.id).unwrap().1.clone(), q.find_item(video.id).unwrap().1.clone());
+    assert_eq!((rate.frame_at(a.start), rate.frame_at(v.start)), (102, 90), "the audio's start (0 px) beat the video's start (4 px)");
+}
