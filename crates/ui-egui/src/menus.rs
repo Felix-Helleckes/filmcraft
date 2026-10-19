@@ -181,6 +181,16 @@ pub fn invoke(app: &mut FilmcraftApp, ctx: &egui::Context, id: &str, mut params:
     if id == "edit.selectAll" && (crate::panels::graphics::select_all_edited_text(app) || crate::panels::effect_controls::select_all_keyframes(app)) {
         return Ok(Value::Null);
     }
+    // Copy and Paste in Effect Controls copy the selected effect and paste effects onto the clip
+    // it shows (#1680)
+    if app.ui.focused == PanelKind::EffectControls && params.as_object().is_none_or(|m| m.is_empty()) {
+        if id == "edit.copy" && app.session.state.selected_effect.is_some() {
+            return invoke(app, ctx, "effects.copy", json!({}));
+        }
+        if id == "edit.paste" && app.session.state.effect_clipboard.is_some() {
+            return invoke(app, ctx, "effects.paste", json!({}));
+        }
+    }
     if filmcraft_engine::source_monitor::source_command(id) && targets_source(app, &params) && params.get("target").is_none() {
         let object = params.as_object_mut().ok_or("command parameters must be an object")?;
         object.insert("target".into(), json!("source"));

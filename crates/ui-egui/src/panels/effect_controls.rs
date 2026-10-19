@@ -247,6 +247,28 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
                 let mut save_preset = false;
                 let fx_id = e.effect.clone();
                 resp.context_menu(|ui| {
+                    // Copy / Paste / Paste Settings (#1680)
+                    let copy = ui.button(tl!("Copy"));
+                    app.auto.add(&format!("effectControls.effect.{fx_id}.copy"), copy.rect, "Copy");
+                    if copy.clicked() {
+                        actions.push(("effects.copy".into(), json!({"clip": clip.0, "indices": [idx]})));
+                        ui.close();
+                    }
+                    let copied = app.session.state.effect_clipboard.as_ref();
+                    let paste = ui.add_enabled(copied.is_some(), egui::Button::new(tl!("Paste")));
+                    app.auto.add(&format!("effectControls.effect.{fx_id}.paste"), paste.rect, "Paste");
+                    if paste.clicked() {
+                        actions.push(("effects.paste".into(), json!({"clips": [clip.0]})));
+                        ui.close();
+                    }
+                    let same = copied.is_some_and(|c| c.effects.iter().any(|e| e.effect == fx_id));
+                    let settings = ui.add_enabled(same, egui::Button::new(tl!("Paste Settings")));
+                    app.auto.add(&format!("effectControls.effect.{fx_id}.pasteSettings"), settings.rect, "Paste Settings");
+                    if settings.clicked() {
+                        actions.push(("effects.pasteSettings".into(), json!({"clip": clip.0, "index": idx})));
+                        ui.close();
+                    }
+                    ui.separator();
                     let sp = ui.button(tl!("Save Preset…"));
                     app.auto.add(&format!("effectControls.effect.{fx_id}.savePreset"), sp.rect, "Save Preset…");
                     if sp.clicked() {

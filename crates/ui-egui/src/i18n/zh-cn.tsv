@@ -3585,3 +3585,8 @@
 	Shows the version, community links and credits in a FilmCraft window.	在 FilmCraft 窗口中显示版本、社区链接和致谢。
 	Couldn't open your web browser	无法打开网页浏览器
 	Open this address in your browser yourself:	请自行在浏览器中打开此地址：
+# Effect Controls: paste a copied effect's settings onto one effect (#1680).
+	Paste Settings	粘贴设置
+	Copy Effect	复制效果
+	Paste Effects	粘贴效果
+	Paste Effect Settings	粘贴效果设置

@@ -3575,3 +3575,8 @@
 	Appearance Settings…	Pengaturan Tampilan…
 	Add to favorites	Tambahkan ke favorit
 	Remove from favorites	Hapus dari favorit
+# Effect Controls: paste a copied effect's settings onto one effect (#1680).
+	Paste Settings	Tempel Pengaturan
+	Copy Effect	Salin Efek
+	Paste Effects	Tempel Efek
+	Paste Effect Settings	Tempel Pengaturan Efek

@@ -3601,3 +3601,8 @@
 	Shows the version, community links and credits in a FilmCraft window.	Mostra la versione, i link della community e i riconoscimenti in una finestra di FilmCraft.
 	Couldn't open your web browser	Impossibile aprire il browser web
 	Open this address in your browser yourself:	Apri tu questo indirizzo nel browser:
+# Effect Controls: paste a copied effect's settings onto one effect (#1680).
+	Paste Settings	Incolla impostazioni
+	Copy Effect	Copia effetto
+	Paste Effects	Incolla effetti
+	Paste Effect Settings	Incolla impostazioni effetto

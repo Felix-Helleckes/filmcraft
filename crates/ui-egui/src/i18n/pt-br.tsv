@@ -3578,3 +3578,8 @@
 
 # The native macOS application menu (Settings…).
 	Settings	Preferências
+# Effect Controls: paste a copied effect's settings onto one effect (#1680).
+	Paste Settings	Colar configurações
+	Copy Effect	Copiar efeito
+	Paste Effects	Colar efeitos
+	Paste Effect Settings	Colar configurações do efeito

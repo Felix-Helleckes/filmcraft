@@ -3577,3 +3577,8 @@
 	Export the labels to a preset file…	Exporter les étiquettes dans un fichier de paramètre prédéfini…
 	Show the presets folder	Afficher le dossier des paramètres prédéfinis
 	Delete this preset	Supprimer ce paramètre prédéfini
+# Effect Controls: paste a copied effect's settings onto one effect (#1680).
+	Paste Settings	Coller les paramètres
+	Copy Effect	Copier l'effet
+	Paste Effects	Coller les effets
+	Paste Effect Settings	Coller les paramètres de l'effet

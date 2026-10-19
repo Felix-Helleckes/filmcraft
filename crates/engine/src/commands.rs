@@ -3405,6 +3405,7 @@ fn build() -> Vec<CommandSpec> {
     v.extend(crate::mixer::commands());
     v.extend(crate::multicam::commands());
     v.extend(crate::essential_sound::commands());
+    v.extend(crate::effect_clipboard::commands());
     v.extend(crate::color::commands());
     v.extend(crate::graphics::commands());
     v.extend(crate::graphic_templates::commands());
