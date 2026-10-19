@@ -154,4 +154,40 @@ fn effects_copy_and_paste_from_the_menu_and_the_keyboard() {
     let after = (d.blurriness(0).len(), d.blurriness(2).len());
     let gained = (after.0 - before.0) + (after.1 - before.1);
     assert_eq!(gained, 1, "one blur, on one clip: {before:?} → {after:?}");
+
+    // an audio effect copied, a linked video and audio pair shown: Cmd+V goes to the audio clip
+    // (#2471 review), not to the video one, which would refuse it
+    let (vid, aud, other) = {
+        let q = d.app().session.active_sequence().unwrap();
+        let v = q.video_tracks[0].items[0].clone();
+        let audio: Vec<_> = q.audio_tracks.iter().flat_map(|t| &t.items).cloned().collect();
+        let a = audio.iter().find(|c| c.link.is_some() && c.link == v.link).unwrap().id.0;
+        let o = audio.iter().find(|c| c.id.0 != a).unwrap().id.0;
+        (v.id.0, a, o)
+    };
+    let level = |d: &mut Driver, c: u64| {
+        let q = d.app().session.active_sequence().unwrap();
+        q.find_item(filmcraft_project::ClipId(c)).unwrap().1.effect("volume").unwrap().param("level").unwrap().value.as_f64().unwrap()
+    };
+    d.exec("effects.setParam", json!({"clip": other, "effect": "volume", "param": "level", "value": -6.0}));
+    let volume = d
+        .app()
+        .session
+        .active_sequence()
+        .unwrap()
+        .find_item(filmcraft_project::ClipId(other))
+        .unwrap()
+        .1
+        .effects
+        .iter()
+        .position(|e| e.effect == "volume")
+        .unwrap();
+    d.exec("effects.copy", json!({"clip": other, "indices": [volume]}));
+    d.exec("timeline.select", json!({"clips": [vid]}));
+    d.frames(3);
+    assert_ne!(level(&mut d, aud), -6.0);
+    d.click("effectControls.effect.motion");
+    d.ok("ui.key", json!({"key": "Cmd+V"}));
+    d.frames(3);
+    assert_eq!(level(&mut d, aud), -6.0, "the shown audio clip takes the copied Volume: {}", d.app().ui.status);
 }

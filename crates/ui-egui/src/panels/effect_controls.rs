@@ -125,9 +125,11 @@ fn selected_clips(app: &FilmcraftApp) -> Vec<(ClipId, TrackItem, TrackKind)> {
     out
 }
 
-/// The clip Effect Controls shows (the first of the selected clips it lists).
-pub(crate) fn shown_clip(app: &FilmcraftApp) -> Option<ClipId> {
-    selected_clips(app).first().map(|(c, ..)| *c)
+/// The clip Effect Controls shows to paste onto: of the clips it lists (a linked video and audio
+/// pair shows both), the first on a track of `kind`, else the first.
+pub(crate) fn shown_clip(app: &FilmcraftApp, kind: Option<TrackKind>) -> Option<ClipId> {
+    let clips = selected_clips(app);
+    clips.iter().find(|(_, _, k)| Some(*k) == kind).or(clips.first()).map(|(c, ..)| *c)
 }
 
 pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
