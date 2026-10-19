@@ -49,7 +49,10 @@ fn auto_reframe_sequence_fills_a_vertical_copy() {
         let (w, h) = s.project.source_size(it.item).unwrap();
         if (w, h) == (1920, 1080) && !old.scale_to_frame {
             let scale = it.effect("motion").unwrap().f64_at("scale", filmcraft_time::Tick::ZERO);
-            assert!((scale - old_scale * 1920.0 / 1080.0).abs() < 0.01, "{}: {old_scale} → {scale}", it.name);
+            // a picture filling the old frame covers the new one; a picture-in-picture keeps its
+            // share of the frame (#2453 review)
+            let k = if old_scale >= 100.0 { 1920.0 / 1080.0 } else { 1080.0 / 1920.0 };
+            assert!((scale - old_scale * k).abs() < 0.01, "{}: {old_scale} → {scale}", it.name);
         }
     }
     assert_eq!(r["clips"].as_u64(), Some(reframed), "{r}");
@@ -123,4 +126,45 @@ fn letterboxed_pictures_are_scaled_to_cover_the_new_frame() {
         let scale = it.effect("motion").unwrap().f64_at("scale", filmcraft_time::Tick::ZERO) / 100.0;
         assert!((scale - cover).abs() < 1e-6, "{}x{}: scale {scale}, covering the 9:16 frame takes {cover}", w, h);
     }
+}
+
+/// #2453 review: a portrait picture-in-picture keeps its share of the frame (it used to shrink to a
+/// third of it), and a non-uniform stretch survives the cover adjustment.
+#[test]
+fn picture_in_picture_and_stretch_survive_a_reframe() {
+    let dir = crate::media_test_util::tmp_dir("reframe-pip");
+    let mut s = demo();
+    let mut clips = Vec::new();
+    for (name, w, h) in [("portrait.png", 1080u32, 1920u32), ("still.png", 3000, 2000)] {
+        let path = dir.join(name);
+        image::RgbaImage::from_pixel(w, h, image::Rgba([200, 120, 40, 255])).save(&path).unwrap();
+        let item = ItemId(s.execute("file.import", json!({"paths": [path.to_string_lossy()]})).unwrap()["items"][0].as_u64().unwrap());
+        s.execute("source.open", json!({"item": item.0})).unwrap();
+        s.execute("playhead.set", json!({"seconds": 400.0 + 10.0 * clips.len() as f64})).unwrap();
+        s.execute("source.overwrite", json!({})).unwrap();
+        let at = s.playhead();
+        let clip = s.active_sequence().unwrap().video_tracks[0].items.iter().find(|c| c.item == item && c.start <= at).unwrap().id;
+        s.execute("timeline.select", json!({"clips": [clip.0]})).unwrap();
+        s.execute("clip.scaleToFrameSize", json!({})).unwrap();
+        clips.push(item);
+    }
+    let (portrait, still) = (clips[0], clips[1]);
+    let set = |s: &mut Session, item: ItemId, param: &str, value: f64| {
+        let clip = s.active_sequence().unwrap().all_tracks().flat_map(|t| &t.items).find(|c| c.item == item).unwrap().id;
+        s.execute("effects.setParam", json!({"clip": clip.0, "effect": "motion", "param": param, "value": value})).unwrap();
+    };
+    set(&mut s, portrait, "scale", 50.0);
+    set(&mut s, still, "scale_width", 110.0);
+    s.execute("sequence.autoReframe", json!({"aspect": "9:16"})).unwrap();
+    let q = s.active_sequence().unwrap().clone();
+    let motion = |item: ItemId, param: &str| {
+        let it = q.all_tracks().flat_map(|t| &t.items).find(|c| c.item == item).unwrap();
+        it.effect("motion").unwrap().f64_at(param, filmcraft_time::Tick::ZERO)
+    };
+    // half the old frame's height, fitted: half the new frame's height, which it fits at 100 %
+    assert!((motion(portrait, "scale") - 50.0).abs() < 1e-6, "{}", motion(portrait, "scale"));
+    // covering the 9:16 frame, with its 10 % horizontal stretch kept
+    let (sc, sw) = (motion(still, "scale"), motion(still, "scale_width"));
+    assert!((sc / 100.0 - 1920.0 / 2000.0).abs() < 1e-6, "{sc}");
+    assert!((sw / sc - 1.1).abs() < 1e-6, "{sw} / {sc}");
 }
