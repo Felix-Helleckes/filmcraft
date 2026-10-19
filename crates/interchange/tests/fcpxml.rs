@@ -204,6 +204,7 @@ fn titles_import_as_text_graphics() {
               <adjust-blend amount="0.5"/>
             </title>
             <title ref="r3" name="Empty" offset="{d72}" start="0s" duration="{d24}"/>
+            <title ref="r3" name="Instant" offset="{d72}" start="0s" duration="0s"><text><text-style>Hi</text-style></text></title>
           </spine>
         </sequence>
       </project>
@@ -260,6 +261,9 @@ fn titles_import_as_text_graphics() {
     // a title without text is skipped and reported; mixed run styles and the template are reported
     assert!(s.video_tracks.iter().flat_map(|t| &t.items).all(|i| i.name != "Empty"));
     assert!(rep.mentions("title \"Empty\" has no text"), "{rep}");
+    // a title without a duration too
+    assert!(s.video_tracks.iter().flat_map(|t| &t.items).all(|i| i.name != "Instant"));
+    assert!(rep.mentions("title \"Instant\" has no duration"), "{rep}");
     assert!(rep.mentions("title \"End Card\": its runs have different styles"), "{rep}");
     assert!(rep.mentions("(Basic Title) was imported as editable text"), "{rep}");
     assert!(!rep.mentions("not supported and were skipped"), "{rep}");

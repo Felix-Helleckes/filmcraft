@@ -403,6 +403,9 @@ impl<'a, 'i> Imp<'a, 'i, '_> {
             "title" => {
                 if dur > Tick::ZERO {
                     vclip = self.title(seq, ctx, el, t0, dur, lane, local_start, primary);
+                } else {
+                    let name = el.attribute("name").unwrap_or("Title");
+                    self.report.warn(format!("title \"{name}\" has no duration and was skipped"));
                 }
                 None
             }
