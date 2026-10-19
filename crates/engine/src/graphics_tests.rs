@@ -492,6 +492,18 @@ fn copied_layers_get_their_own_uids_and_pins() {
     let l = raw(&s, other);
     assert!(unique(&l), "{l:?}");
     assert_eq!(l[1].1, None, "a pin to a layer that is not there is dropped: {l:?}");
+    // #2460 review: into a graphic whose own layers carry the same uids, the pin is dropped too,
+    // instead of following whichever of its layers has the ellipse's number
+    s.execute("playhead.set", json!({"seconds": 700.0})).unwrap();
+    let busy = three_shapes(&mut s);
+    s.execute("graphics.pin", json!({"clip": busy, "layer": 2, "to": 1, "edges": ["left"]})).unwrap();
+    let uids: Vec<u64> = raw(&s, busy).iter().map(|x| x.0).collect();
+    assert!(uids.contains(&ellipse), "the other graphic has a layer numbered like the ellipse: {uids:?}");
+    s.execute("graphics.copyLayer", json!({"clip": clip, "layers": [0]})).unwrap();
+    s.execute("graphics.pasteLayer", json!({"clip": busy})).unwrap();
+    let l = raw(&s, busy);
+    assert!(unique(&l), "{l:?}");
+    assert_eq!(l[3].1, None, "the pasted rectangle follows none of this graphic's layers: {l:?}");
 }
 
 #[test]

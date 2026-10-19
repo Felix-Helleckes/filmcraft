@@ -360,6 +360,10 @@ pub struct EditorState {
     /// them to a graphic clip (#2264, #2265).
     #[serde(skip)]
     pub layer_clipboard: Vec<filmcraft_project::EffectInstance>,
+    /// The graphic clip the layer clipboard was copied from: a pin to a layer that wasn't copied
+    /// keeps its target only when pasting back into it (uids are per graphic).
+    #[serde(skip)]
+    pub layer_clipboard_clip: Option<filmcraft_project::ClipId>,
     /// The last Edit ▸ Find… (Find Next continues it).
     #[serde(default)]
     pub find: Option<project_tools::FindState>,

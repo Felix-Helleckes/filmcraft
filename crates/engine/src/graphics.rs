@@ -697,7 +697,7 @@ fn has_layer_clipboard(s: &Session) -> std::result::Result<(), String> {
 /// a fresh one (pins and template controls find layers by uid, and two layers sharing one would
 /// both answer), a pin to another copied layer follows that layer's copy, and a pin to a layer this
 /// clip does not have is dropped instead of pointing at whatever later takes that uid.
-fn adopt_layer_copies(effects: &mut [EffectInstance], added: &[usize]) {
+fn adopt_layer_copies(effects: &mut [EffectInstance], added: &[usize], same_graphic: bool) {
     use filmcraft_project::graphic_design::PinTarget;
     use filmcraft_project::gtemplate::layer_uid;
     // the layers that were there before, read before the copies are renamed: a fresh uid can be
@@ -723,7 +723,9 @@ fn adopt_layer_copies(effects: &mut [EffectInstance], added: &[usize]) {
                         pin.to = PinTarget::Layer(new);
                     }
                 }
-                None if !present.contains(&u) => extra.pin = None,
+                // a layer uid means something only in its own graphic: in another one the same
+                // number is an unrelated layer (#2460 review)
+                None if !same_graphic || !present.contains(&u) => extra.pin = None,
                 None => {}
             }
         }
@@ -741,6 +743,7 @@ fn copy_layers(s: &mut Session, p: &Value) -> Result<Value> {
     let copied: Vec<EffectInstance> = chosen.iter().filter_map(|&e| it.effects.get(e).cloned()).collect();
     let n = copied.len();
     s.state.layer_clipboard = copied;
+    s.state.layer_clipboard_clip = Some(clip);
     Ok(json!({"clip": clip.0, "copied": n}))
 }
 
@@ -755,6 +758,7 @@ fn paste_layers(s: &mut Session, p: &Value) -> Result<Value> {
     let clip = target_clip(s, p).ok_or_else(|| bad(cmd, "no graphic clip"))?;
     let layers = s.state.layer_clipboard.clone();
     let count = layers.len();
+    let same_graphic = s.state.layer_clipboard_clip == Some(clip);
     let pasted = s.edit_sequence("Paste Graphic Layers", |q, _, st| {
         let (_, it) = q.find_item_mut(clip).ok_or(filmcraft_edit::EditError::NoItem(clip))?;
         // in front: after the last graphic layer, as a new layer goes
@@ -762,7 +766,7 @@ fn paste_layers(s: &mut Session, p: &Value) -> Result<Value> {
         for (k, l) in layers.into_iter().enumerate() {
             it.effects.insert(pos + k, l);
         }
-        adopt_layer_copies(&mut it.effects, &(pos..pos + count).collect::<Vec<_>>());
+        adopt_layer_copies(&mut it.effects, &(pos..pos + count).collect::<Vec<_>>(), same_graphic);
         let n = layer_indices(&it.effects).len();
         let pasted: Vec<usize> = (n.saturating_sub(count)..n).collect();
         st.selection = vec![clip];
@@ -786,7 +790,7 @@ fn duplicate_layers(s: &mut Session, p: &Value) -> Result<Value> {
             it.effects.insert(e + 1, copy);
         }
         let added: Vec<usize> = chosen.iter().enumerate().map(|(i, &e)| e + i + 1).collect();
-        adopt_layer_copies(&mut it.effects, &added);
+        adopt_layer_copies(&mut it.effects, &added, true);
         // the i-th original moved up by the i copies inserted before it; its copy is just after it
         let idx = layer_indices(&it.effects);
         let copies: Vec<usize> = added.iter().filter_map(|a| idx.iter().position(|x| x == a)).collect();
