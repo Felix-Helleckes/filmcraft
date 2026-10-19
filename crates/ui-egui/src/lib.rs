@@ -1507,6 +1507,9 @@ impl FilmcraftApp {
                         self.v_down = *pressed;
                     }
                     egui::Event::Paste(_) if modifiers.command => self.v_down = true,
+                    // back from another window: a menu paste's release that never came won't
+                    // come now, and must not take the next Cmd+V's (#2361)
+                    egui::Event::WindowFocused(true) => self.menu_paste_at = None,
                     _ => {}
                 }
             }
