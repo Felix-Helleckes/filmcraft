@@ -3592,3 +3592,9 @@
 	Open a sequence to search its graphics	打开序列以搜索其中的图形
 	No text graphics in this sequence. Add text with the Type tool.	此序列中没有文本图形。请用文字工具添加文本。
 	No matching text.	没有匹配的文本。
+# The speech model download dialog (G19).
+	Transcription runs on this computer with {model}. It needs a one-time download of {size}.	转录在这台电脑上使用 {model} 进行，需要一次性下载 {size}。
+	The audio is not sent anywhere.	音频不会被发送到任何地方。
+	Licence:	许可证：
+	Download and Transcribe	下载并转录
+	Try Again	重试

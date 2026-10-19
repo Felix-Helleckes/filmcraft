@@ -3616,3 +3616,9 @@
 	Open a sequence to search its graphics	シーケンスを開くとグラフィックスを検索できます
 	No text graphics in this sequence. Add text with the Type tool.	このシーケンスにはテキストのグラフィックスがありません。文字ツールでテキストを追加してください。
 	No matching text.	一致するテキストはありません。
+# The speech model download dialog (G19).
+	Transcription runs on this computer with {model}. It needs a one-time download of {size}.	文字起こしはこのコンピューター上で {model} を使って行われます。初回のみ {size} のダウンロードが必要です。
+	The audio is not sent anywhere.	オーディオはどこにも送信されません。
+	Licence:	ライセンス:
+	Download and Transcribe	ダウンロードして文字起こし
+	Try Again	再試行
