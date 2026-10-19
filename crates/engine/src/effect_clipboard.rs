@@ -103,6 +103,9 @@ fn paste(s: &mut Session, p: &Value) -> Result<Value> {
     // clips named in the call are taken as they are; the selection brings its linked partners
     let named = p.get("clips").is_some_and(|v| !v.is_null()) || p.get("clip").is_some_and(|v| !v.is_null());
     let clips = if named { clips_p(s, p) } else { with_links(s, &s.state.selection) };
+    if let Some(missing) = clips.iter().find(|c| q.find_item(**c).is_none()) {
+        return Err(bad(CMD, format!("no clip {}", missing.0)));
+    }
     let targets: Vec<ClipId> = clips.into_iter().filter(|c| q.find_item(*c).and_then(|(tid, _)| q.track(tid)).is_some_and(|t| t.kind == copied.kind)).collect();
     if targets.is_empty() {
         return Err(bad(CMD, "select clips of the kind the effects were copied from (video or audio)"));

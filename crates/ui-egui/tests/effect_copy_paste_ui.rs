@@ -122,4 +122,23 @@ fn effects_copy_and_paste_from_the_menu_and_the_keyboard() {
     d.frames(3);
     assert_eq!(d.blurriness(2), vec![30.0, 30.0], "Cmd+V pastes a second blur");
     assert_eq!(d.app().session.active_sequence().unwrap().video_tracks[0].items.len(), clips, "no clip is pasted");
+
+    // Cmd+X cuts the selected effect: copied, then gone
+    d.click("effectControls.effect.gaussian_blur");
+    d.ok("ui.key", json!({"key": "Cmd+X"}));
+    d.frames(3);
+    assert_eq!(d.blurriness(2), vec![30.0], "Cmd+X removes the selected blur");
+    assert_eq!(d.app().session.active_sequence().unwrap().video_tracks[0].items.len(), clips, "no clip is cut");
+
+    // with clips copied last, Cmd+V in Effect Controls still pastes no clip (#2471 review)
+    d.click(&format!("timeline.clip.{b}"));
+    assert_eq!(d.app().ui.focused, filmcraft_ui_egui::dock::PanelKind::Timeline);
+    d.ok("ui.key", json!({"key": "Cmd+C"}));
+    d.frames(2);
+    assert!(!d.app().session.state.clipboard.is_empty(), "the Timeline copied the clip");
+    d.click("effectControls.effect.gaussian_blur");
+    d.ok("ui.key", json!({"key": "Cmd+V"}));
+    d.frames(3);
+    assert_eq!(d.app().session.active_sequence().unwrap().video_tracks[0].items.len(), clips, "Effect Controls never pastes clips");
+    assert_eq!(d.blurriness(2), vec![30.0], "and nothing else either: the effects copied before are replaced by the clips");
 }

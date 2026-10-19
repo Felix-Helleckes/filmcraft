@@ -120,3 +120,29 @@ fn hostile_or_mismatched_requests_are_refused_without_a_change() {
     assert_eq!(s.project.to_json(), before);
     assert_eq!(s.history.undo.len(), undo);
 }
+
+#[test]
+fn a_paste_naming_an_unknown_clip_changes_nothing() {
+    // #2471 review: the unknown id used to be dropped and the rest pasted
+    let mut s = demo();
+    let (a, b) = (v1(&s, 0), v1(&s, 2));
+    s.execute("effects.copy", json!({"clip": a.id.0, "indices": [index_of(&a, "motion")]})).unwrap();
+    let before = s.project.to_json();
+    let undo = s.history.undo.len();
+    assert!(s.execute("effects.paste", json!({"clips": [b.id.0, 987_654]})).is_err());
+    assert_eq!(s.project.to_json(), before);
+    assert_eq!(s.history.undo.len(), undo);
+}
+
+#[test]
+fn copying_clips_replaces_copied_effects() {
+    // #2471 review: the last thing copied wins
+    let mut s = demo();
+    let a = v1(&s, 0);
+    s.execute("effects.copy", json!({"clip": a.id.0, "indices": [0]})).unwrap();
+    assert!(s.state.effect_clipboard.is_some());
+    s.execute("timeline.select", json!({"clips": [a.id.0]})).unwrap();
+    s.execute("edit.copy", json!({})).unwrap();
+    assert!(s.state.effect_clipboard.is_none());
+    assert!(s.execute("effects.paste", json!({"clips": [a.id.0]})).is_err());
+}

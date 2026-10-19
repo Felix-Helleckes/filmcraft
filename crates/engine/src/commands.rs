@@ -3615,6 +3615,8 @@ pub(crate) fn json_to_param(template: &ParamValue, v: &Value) -> Option<ParamVal
 }
 
 fn copy_selection(s: &mut Session) {
+    // the last thing copied wins: copied clips replace effects copied in Effect Controls
+    s.state.effect_clipboard = None;
     let Some(q) = s.active_sequence() else { return };
     let sel = with_links(s, &s.state.selection);
     let min = sel.iter().filter_map(|c| q.find_item(*c).map(|(_, i)| i.start)).min().unwrap_or_default();

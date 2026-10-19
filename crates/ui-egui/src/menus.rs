@@ -183,12 +183,28 @@ pub fn invoke(app: &mut FilmcraftApp, ctx: &egui::Context, id: &str, mut params:
     }
     // Copy and Paste in Effect Controls copy the selected effect and paste effects onto the clip
     // it shows (#1680)
+    // there, and never the Timeline's clips, whatever is selected or copied
     if app.ui.focused == PanelKind::EffectControls && params.as_object().is_none_or(|m| m.is_empty()) {
-        if id == "edit.copy" && app.session.state.selected_effect.is_some() {
-            return invoke(app, ctx, "effects.copy", json!({}));
-        }
-        if id == "edit.paste" && app.session.state.effect_clipboard.is_some() {
-            return invoke(app, ctx, "effects.paste", json!({}));
+        match id {
+            "edit.copy" => return invoke(app, ctx, "effects.copy", json!({})),
+            // Cut copies the selected effect, then removes it (a fixed effect stays: it can't go)
+            "edit.cut" => {
+                let r = invoke(app, ctx, "effects.copy", json!({}))?;
+                let sel = app.session.state.selected_effect.clone();
+                let target = sel.and_then(|e| {
+                    let q = app.session.active_sequence()?;
+                    let (_, it) = q.find_item(e.clip)?;
+                    let index = e.index(&it.effects)?;
+                    let fixed = it.effects.get(index)?.def().is_none_or(|d| d.intrinsic);
+                    (!fixed).then_some((e.clip, index))
+                });
+                if let Some((clip, index)) = target {
+                    return invoke(app, ctx, "effects.remove", json!({"clip": clip.0, "index": index}));
+                }
+                return Ok(r);
+            }
+            "edit.paste" | "edit.pasteInsert" => return invoke(app, ctx, "effects.paste", json!({})),
+            _ => {}
         }
     }
     if filmcraft_engine::source_monitor::source_command(id) && targets_source(app, &params) && params.get("target").is_none() {
