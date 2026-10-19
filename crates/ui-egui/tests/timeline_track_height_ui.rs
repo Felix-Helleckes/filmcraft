@@ -143,4 +143,13 @@ fn wheel_over_track_headers_changes_track_heights() {
     wheel(&mut d, "timeline.tracks", 40.0, json!({"shift": true}));
     assert_eq!(d.heights(), (v2, a2));
     assert!(d.app().ui.timeline.target_scroll != scroll, "Shift + wheel over the clips scrolls sideways");
+    // Cmd + wheel over a header scrolls that kind's tracks up and down, not sideways (tall tracks,
+    // so there is something to scroll)
+    d.ok("ui.set", json!({"timeline": {"videoTrackHeight": 220.0, "audioTrackHeight": 220.0}}));
+    d.frames(3);
+    let (scroll, v_scroll, a_scroll) = (d.app().ui.timeline.target_scroll, d.app().ui.timeline.v_scroll, d.app().ui.timeline.a_scroll);
+    wheel(&mut d, "timeline.track.A1.target", -40.0, json!({"command": true}));
+    assert_eq!(d.app().ui.timeline.target_scroll, scroll, "not sideways");
+    assert_eq!(d.app().ui.timeline.v_scroll, v_scroll, "the video tracks stay");
+    assert!(d.app().ui.timeline.a_scroll != a_scroll, "the audio tracks scroll");
 }

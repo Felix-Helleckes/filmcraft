@@ -2248,8 +2248,9 @@ fn interact(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, layout: &
     //   Option + wheel   zoom about the pointer
     // Settings ▸ Timeline ▸ Timeline Mouse Scrolling "Horizontal" swaps the first two. A sideways
     // gesture (trackpad swipe, tilt wheel, Shift + wheel) always scrolls sideways; a pinch zooms.
-    // Over the track headers, Shift + wheel makes every track taller or shorter and Option + wheel
-    // the tracks of the kind under the pointer (heights are per kind) (#2046).
+    // Over the track headers, Shift + wheel makes every track taller or shorter, Option + wheel
+    // the tracks of the kind under the pointer (heights are per kind), and Cmd / Ctrl + wheel
+    // scrolls those tracks up and down (#2046).
     if ui.rect_contains_pointer(rect)
         && let Some(p) = ctx.pointer_hover_pos()
     {
@@ -2283,7 +2284,11 @@ fn interact(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, layout: &
             app.tl.zoom_anchor = Some((anchor_t, p.x));
         } else if w.delta != egui::Vec2::ZERO {
             let wheel_sideways = (app.session.prefs.timeline.mouse_scrolling == "horizontal") != w.command;
-            let sideways = if w.delta.x.abs() > w.delta.y.abs() {
+            // Ctrl / Cmd + wheel over the track headers scrolls the video or the audio tracks
+            // (whichever the pointer is over) up and down, whatever the scrolling setting (#2046)
+            let sideways = if header_row.is_some() && w.command && w.delta.y != 0.0 {
+                None
+            } else if w.delta.x.abs() > w.delta.y.abs() {
                 Some(w.delta.x)
             } else if wheel_sideways || w.shift {
                 Some(w.delta.y)
