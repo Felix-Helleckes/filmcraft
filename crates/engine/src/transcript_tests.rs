@@ -179,3 +179,52 @@ fn generate_without_a_transcriber() {
     let r = s.execute("transcript.generate", json!({})).unwrap();
     assert!(r["items"].as_array().unwrap().len() >= 2, "{r}");
 }
+
+/// Wait (bounded) until the background job `id` has finished, then apply it as a UI frame would.
+fn finish_job(s: &mut Session, id: u64) {
+    for _ in 0..1000 {
+        let done = s.jobs.iter().find(|j| j.id == id).is_none_or(|j| j.progress.finished.load(std::sync::atomic::Ordering::Relaxed));
+        if done {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    s.poll_persistence();
+}
+
+/// `"wait": false` transcribes in a background job (the app): it returns at once with the job,
+/// and the transcript is stored, as one undo step, once the job has finished.
+#[test]
+fn a_background_transcription_stores_its_transcript_when_it_finishes() {
+    let (mut s, item, _) = session();
+    let undo = s.history.undo.len();
+    let r = s.execute("transcript.generate", json!({"items": [item.0], "wait": false})).unwrap();
+    let id = r["job"].as_u64().expect("a job");
+    assert_eq!(crate::transcript::running_job(&s), Some(id));
+    finish_job(&mut s, id);
+    assert!(s.project.transcripts.contains_key(&item));
+    assert_eq!(s.history.undo.len(), undo + 1, "one undo step");
+    assert!(crate::transcript::running_job(&s).is_none());
+    let job = s.jobs.iter().find(|j| j.id == id).unwrap();
+    assert_eq!(job.progress.done.load(std::sync::atomic::Ordering::Relaxed), job.progress.total.load(std::sync::atomic::Ordering::Relaxed));
+}
+
+/// A cancelled background transcription, or one whose project was replaced meanwhile, stores
+/// nothing.
+#[test]
+fn a_cancelled_or_outdated_background_transcription_stores_nothing() {
+    let (mut s, item, _) = session();
+    let id = s.execute("transcript.generate", json!({"items": [item.0], "wait": false})).unwrap()["job"].as_u64().unwrap();
+    s.jobs.iter().find(|j| j.id == id).unwrap().progress.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+    finish_job(&mut s, id);
+    assert!(s.project.transcripts.is_empty(), "cancelled: nothing stored");
+    assert!(crate::transcript::running_job(&s).is_none());
+
+    let (mut s, item, _) = session();
+    let id = s.execute("transcript.generate", json!({"items": [item.0], "wait": false})).unwrap()["job"].as_u64().unwrap();
+    let transcriber = s.transcriber.clone();
+    s.execute("file.openDemoProject", json!({})).unwrap();
+    s.transcriber = transcriber;
+    finish_job(&mut s, id);
+    assert!(s.project.transcripts.is_empty(), "another project: nothing stored in it");
+}

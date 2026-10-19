@@ -3592,3 +3592,7 @@
 	Open a sequence to search its graphics	打开序列以搜索其中的图形
 	No text graphics in this sequence. Add text with the Type tool.	此序列中没有文本图形。请用文字工具添加文本。
 	No matching text.	没有匹配的文本。
+# Transcribing in the background (Text panel).
+	Transcribing…	正在转录…
+	Stopping…	正在停止…
+	Transcribing in the background (see the Text panel or Progress)	正在后台转录（见文本面板或进度）
