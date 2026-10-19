@@ -264,6 +264,9 @@ fn a_menu_paste_is_not_repeated_by_its_key_release() {
     d.ok("ui.menu.invoke", json!({"id": "edit.copy"}));
     let copies = |d: &mut Driver| d.clips().iter().filter(|c| c.0 == 'V' && c.3 == first.3).count();
     let n = copies(&mut d);
+    // the key equivalent: Cmd is down when the menu runs Paste
+    d.harness.input_mut().events.push(egui::Event::ModifiersChanged(egui::Modifiers::COMMAND));
+    d.frames(1);
     menu.send("edit.paste".into()).unwrap();
     d.frames(1);
     assert_eq!(copies(&mut d), n + 1, "the menu pasted");
@@ -278,4 +281,25 @@ fn a_menu_paste_is_not_repeated_by_its_key_release() {
     d.frames(80);
     d.ctrl_v_without_text(egui::Modifiers::COMMAND);
     assert_eq!(copies(&mut d), n + 2);
+}
+
+/// A click on Edit ▸ Paste (no Cmd held) leaves no key release behind: the next Cmd+V whose press
+/// egui-winit dropped (#611) still pastes.
+#[test]
+fn a_menu_click_paste_does_not_swallow_the_next_cmd_v() {
+    let mut d = Driver::demo("menu-click-paste");
+    d.ok("ui.set", json!({"focused": "Timeline"}));
+    d.clipboard(None);
+    let (menu, inbox) = std::sync::mpsc::channel::<String>();
+    d.app().command_inbox = Some(inbox);
+    let first = d.clips().into_iter().find(|c| c.0 == 'V' && c.1 == 0).unwrap();
+    d.ok("engine.execute", json!({"command": "timeline.select", "params": {"clips": [first.2]}}));
+    d.ok("ui.menu.invoke", json!({"id": "edit.copy"}));
+    let copies = |d: &mut Driver| d.clips().iter().filter(|c| c.0 == 'V' && c.3 == first.3).count();
+    let n = copies(&mut d);
+    menu.send("edit.paste".into()).unwrap();
+    d.frames(1);
+    assert_eq!(copies(&mut d), n + 1, "the menu pasted");
+    d.ctrl_v_without_text(egui::Modifiers::COMMAND);
+    assert_eq!(copies(&mut d), n + 2, "Cmd+V right after a menu click pastes");
 }

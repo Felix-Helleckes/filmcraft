@@ -1768,7 +1768,9 @@ impl FilmcraftApp {
                 if self.control_input_only {
                     continue;
                 }
-                if matches!(id.as_str(), "edit.paste" | "edit.pasteInsert" | "edit.pasteAttributes") {
+                // only the key equivalent (Cmd held), not a click on the menu item, leaves a V
+                // release to swallow
+                if matches!(id.as_str(), "edit.paste" | "edit.pasteInsert" | "edit.pasteAttributes") && ctx.input(|i| i.modifiers.command) {
                     self.menu_paste_at = Some(ctx.input(|i| i.time));
                 }
                 if let Err(e) = menus::invoke(self, &ctx, &id, json!({})) {
