@@ -84,11 +84,17 @@ pub struct ControlTicket {
 
 impl ControlTicket {
     /// Give up on the request. `true` if the UI had not run it, which now never will; `false` if it
-    /// already ran (or is running): its effect stands even though the reply is late.
+    /// already ran: its effect stands even though the reply is late. While the UI thread is inside
+    /// [`handle`] for it, this waits for that call to end: a [`Outcome::Retry`] puts it back to
+    /// pending, and it must then be abandoned, not reported as run and run later.
     pub fn abandon(&self) -> bool {
-        match self.state.compare_exchange(PENDING, ABANDONED, Ordering::AcqRel, Ordering::Acquire) {
-            Ok(_) => true,
-            Err(state) => state == ABANDONED,
+        loop {
+            match self.state.compare_exchange(PENDING, ABANDONED, Ordering::AcqRel, Ordering::Acquire) {
+                Ok(_) => return true,
+                // one synchronous `handle` call on the UI thread: it ends soon
+                Err(RUNNING) => std::thread::sleep(std::time::Duration::from_millis(1)),
+                Err(state) => return state == ABANDONED,
+            }
         }
     }
 }
@@ -675,5 +681,28 @@ mod base64_tests {
         for (i, o) in [("", ""), ("f", "Zg=="), ("fo", "Zm8="), ("foo", "Zm9v"), ("foob", "Zm9vYg=="), ("fooba", "Zm9vYmE="), ("foobar", "Zm9vYmFy")] {
             assert_eq!(super::base64(i.as_bytes()), o);
         }
+    }
+}
+
+#[cfg(test)]
+mod ticket_tests {
+    /// #1584: a request that times out while the UI is running it and asking for a retry is
+    /// abandoned (and never runs later), not reported as run.
+    #[test]
+    fn abandon_waits_for_a_running_retry_and_wins() {
+        let (req, _rx) = super::ControlRequest::new("ui.click", serde_json::json!({}));
+        let ticket = req.ticket();
+        assert!(req.begin(), "the UI takes it");
+        let t = std::thread::spawn(move || ticket.abandon());
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        req.finish(false); // the handle call asked for a retry
+        assert!(t.join().unwrap(), "abandoned after the retry");
+        assert!(!req.begin(), "never runs later");
+        // one that ran stays run
+        let (req, _rx) = super::ControlRequest::new("ui.click", serde_json::json!({}));
+        let ticket = req.ticket();
+        assert!(req.begin());
+        req.finish(true);
+        assert!(!ticket.abandon());
     }
 }
