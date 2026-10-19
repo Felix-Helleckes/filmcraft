@@ -747,3 +747,25 @@ fn a_pinned_layer_moved_with_its_target_moves_once() {
     s.execute("edit.undo", json!({})).unwrap();
     assert_eq!((shown(&s, 0), shown(&s, 1)), (p0, p1), "undo puts both back");
 }
+
+/// #2363 review: Align moves a pinned layer and its target by different amounts; the pinned
+/// layer ends where Align put it, not where its target's move would drag it.
+#[test]
+fn align_puts_a_pinned_layer_where_it_asks() {
+    let mut s = demo();
+    let clip = three_shapes(&mut s);
+    s.execute("graphics.pin", json!({"clip": clip, "layer": 0, "to": 1, "edges": ["left", "top"]})).unwrap();
+    let shown = |s: &Session, l: usize| {
+        let q = s.active_sequence().unwrap();
+        let (_, it) = q.find_item(ClipId(clip)).unwrap();
+        let ei = layer_indices(&it.effects)[l];
+        let specs = filmcraft_render::graphic_clip::item_layer_specs(it, Tick::ZERO, (q.settings.width, q.settings.height));
+        specs.iter().find(|(x, _)| *x == ei).unwrap().1.transform.position
+    };
+    let (rect, ellipse) = (shown(&s, 0), shown(&s, 1));
+    // left edges to the selection's: the rectangle is already leftmost, so only the ellipse moves
+    s.execute("graphics.align", json!({"clip": clip, "layers": [0, 1], "align": "left", "to": "selection"})).unwrap();
+    let (r1, e1) = (shown(&s, 0), shown(&s, 1));
+    assert!(e1.x < ellipse.x - 100.0, "the ellipse moved left: {ellipse:?} → {e1:?}");
+    assert!((r1.x - rect.x).abs() < 1e-6 && (r1.y - rect.y).abs() < 1e-6, "the pinned rectangle stays where Align put it: {rect:?} → {r1:?}");
+}

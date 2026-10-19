@@ -471,21 +471,31 @@ pub(crate) fn move_layers(s: &mut Session, clip: ClipId, moves: Vec<(usize, Vec2
         let (_, it) = q.find_item_mut(clip).ok_or(filmcraft_edit::EditError::NoItem(clip))?;
         let mt = it.source_time_at(tl.clamp(it.start, it.end() - Tick(1)));
         // the layers moving now, by uid: one pinned to one of them moves with it already
-        let moving: Vec<u64> = moves.iter().filter_map(|(ei, _)| it.effects.get(*ei)?.layer.as_ref().map(|x| x.uid)).filter(|&u| u != 0).collect();
+        // how far each moving layer goes, by uid, before anything changes
+        let deltas: Vec<(u64, f64, f64)> = moves
+            .iter()
+            .filter_map(|(ei, pos)| {
+                let e = it.effects.get(*ei)?;
+                let uid = e.layer.as_ref().map(|x| x.uid).filter(|&u| u != 0)?;
+                let old = e.params.get("position")?.value_at(mt).as_vec2()?;
+                Some((uid, pos.x - old.x, pos.y - old.y))
+            })
+            .collect();
         for (ei, pos) in &moves {
             let Some(e) = it.effects.get_mut(*ei) else { continue };
             let Some(prm) = e.params.get_mut("position") else { continue };
             let old = prm.value_at(mt).as_vec2().unwrap_or(*pos);
             prm.set_at(mt, ParamValue::Vec2(*pos));
-            // a pinned layer keeps following its target from its new place; when the target
-            // moves too, following it is the whole move (#2363 review: it moved twice)
-            let target_moves = e
-                .layer
-                .as_ref()
-                .and_then(|x| x.pin.as_ref())
-                .is_some_and(|p| matches!(p.to, filmcraft_project::graphic_design::PinTarget::Layer(u) if moving.contains(&u)));
-            if let Some(pin) = e.layer.as_mut().and_then(|x| x.pin.as_mut()).filter(|_| !target_moves) {
-                let (dx, dy) = (pos.x - old.x, pos.y - old.y);
+            // a pinned layer keeps following its target from its new place: its offsets change
+            // by how much further it moved than its target (#2363 review: when both move, by
+            // the same delta (a drag) nothing changes; by different ones (Align, Distribute),
+            // the difference)
+            if let Some(pin) = e.layer.as_mut().and_then(|x| x.pin.as_mut()) {
+                let (tx, ty) = match pin.to {
+                    filmcraft_project::graphic_design::PinTarget::Layer(u) => deltas.iter().find(|d| d.0 == u).map_or((0.0, 0.0), |d| (d.1, d.2)),
+                    filmcraft_project::graphic_design::PinTarget::Frame => (0.0, 0.0),
+                };
+                let (dx, dy) = (pos.x - old.x - tx, pos.y - old.y - ty);
                 pin.offsets[0] += dx;
                 pin.offsets[2] += dx;
                 pin.offsets[1] += dy;
