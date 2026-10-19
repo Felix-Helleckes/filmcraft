@@ -26,7 +26,8 @@ pub fn folder_rows(app: &mut FilmcraftApp, ui: &mut egui::Ui, filter: &str) -> O
         if resp.hovered() {
             ui.painter().rect_filled(r, 0.0, t.hover);
         }
-        let x = r.min.x + 30.0;
+        // inside the Presets folder: its sub-level, as effects are in theirs (#2329)
+        let x = r.min.x + crate::panels::effects::row_indent(1) + 18.0;
         icons::paint(
             ui.painter(),
             Rect::from_center_size(pos2(x, r.center().y), vec2(13.0, 13.0)),

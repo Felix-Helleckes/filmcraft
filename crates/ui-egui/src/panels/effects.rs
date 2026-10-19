@@ -87,8 +87,9 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
                     if resp.hovered() {
                         ui.painter().rect_filled(r, 0.0, t.hover);
                     }
-                    let x = r.min.x + 46.0;
-                    let icon_r = Rect::from_center_size(pos2(x - 10.0, r.center().y), vec2(13.0, 13.0));
+                    // inside its folder: one level deeper than the folder row (#2329)
+                    let x = r.min.x + row_indent(if s.is_empty() { 1 } else { 2 }) + 30.0;
+                    let icon_r = Rect::from_center_size(pos2(x - 12.0, r.center().y), vec2(13.0, 13.0));
                     let is_tr = matches!(d.kind, filmcraft_project::EffectKind::VideoTransition | filmcraft_project::EffectKind::AudioTransition);
                     ui.painter().rect_stroke(icon_r, 2.0, egui::Stroke::new(1.0, t.text_dim), egui::StrokeKind::Inside);
                     if is_tr {
@@ -139,6 +140,13 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     }
 }
 
+/// Where a row of the Effects tree at `depth` starts: a folder's chevron, or the icon column of an
+/// effect or preset (whose icon sits where a folder at the same depth has its folder icon, and
+/// whose name lines up with that folder's name). Contents are one level deeper than their folder.
+pub(crate) fn row_indent(depth: usize) -> f32 {
+    8.0 + depth as f32 * 16.0
+}
+
 fn folder_row(app: &mut FilmcraftApp, ui: &mut egui::Ui, key: &str, depth: usize, filter: &str) -> bool {
     let t = app.tokens;
     let open = !filter.is_empty() || app.ui.expanded_fx.iter().any(|k| k == key);
@@ -146,7 +154,7 @@ fn folder_row(app: &mut FilmcraftApp, ui: &mut egui::Ui, key: &str, depth: usize
     if resp.hovered() {
         ui.painter().rect_filled(r, 0.0, t.hover);
     }
-    let x = r.min.x + 8.0 + depth as f32 * 16.0;
+    let x = r.min.x + row_indent(depth);
     icons::paint(
         ui.painter(),
         Rect::from_center_size(pos2(x + 4.0, r.center().y), vec2(10.0, 10.0)),
@@ -296,4 +304,18 @@ fn preset_grid(app: &mut FilmcraftApp, ui: &mut egui::Ui, area: Rect) -> Option<
         }
     }
     apply
+}
+
+#[cfg(test)]
+mod indent_tests {
+    use super::row_indent;
+
+    /// #2329: an effect's name starts right of its folder's name (they had the same indent, or less)
+    #[test]
+    fn effects_are_indented_under_their_folder() {
+        let (folder_name, effect_name) = (row_indent(1) + 30.0, row_indent(2) + 30.0);
+        assert!(effect_name >= folder_name + 12.0, "{effect_name} vs {folder_name}");
+        // a loose effect of a top folder lines up with that folder's sub-folders
+        assert_eq!(row_indent(1) + 30.0, folder_name);
+    }
 }
