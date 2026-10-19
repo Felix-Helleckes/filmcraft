@@ -107,15 +107,25 @@ fn reframe_item(pr: &Project, it: &mut TrackItem, seq_par: f64, from: (u32, u32)
                 other => other,
             });
         }
+        // A picture that filled the old frame, with or without bars (Scale to Frame Size, another
+        // aspect, a portrait clip), covers the new one: zoomed in beyond covering the old frame,
+        // it stays that much bigger than covering the new one; letterboxed, it is raised to
+        // cover rather than keeping its bars (#2453 review). A picture smaller than that (a
+        // picture-in-picture) keeps its size relative to the frame.
+        let f0 = fit(from);
+        let rescale = |s: f64| {
+            let old = s / 100.0 * pre;
+            let new = if old >= f0 * (1.0 - 1e-6) { c1 * (old / c0).max(1.0) } else { old * zoom };
+            if new.is_finite() { (new * 100.0).clamp(0.0, MAX_SCALE) } else { 100.0 * c1 }
+        };
         for id in ["scale", "scale_width"] {
-            let k = pre * zoom;
             match motion.param_mut(id) {
                 Some(p) => p.map_values(|v| match v {
-                    ParamValue::Float(s) => ParamValue::Float((s * k).clamp(0.0, MAX_SCALE)),
+                    ParamValue::Float(s) => ParamValue::Float(rescale(s)),
                     other => other,
                 }),
                 None => {
-                    motion.params.insert(id.to_string(), Param::new(ParamValue::Float((100.0 * k).clamp(0.0, MAX_SCALE))));
+                    motion.params.insert(id.to_string(), Param::new(ParamValue::Float(rescale(100.0))));
                 }
             }
         }

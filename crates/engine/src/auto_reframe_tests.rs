@@ -84,3 +84,43 @@ fn auto_reframe_sizes_and_refusals() {
         assert!(s.execute("sequence.autoReframe", bad.clone()).is_err(), "{bad}");
     }
 }
+
+/// #2453 review: a picture that didn't fill the old frame (a 3:2 still and a portrait phone clip,
+/// both with Scale to Frame Size in the 16:9 sequence) is scaled to cover the new one, not carried
+/// over with its letterbox.
+#[test]
+fn letterboxed_pictures_are_scaled_to_cover_the_new_frame() {
+    let dir = crate::media_test_util::tmp_dir("reframe-letterbox");
+    let mut s = demo();
+    let mut items = Vec::new();
+    for (name, w, h) in [("still.png", 3000u32, 2000u32), ("portrait.png", 1080, 1920)] {
+        let path = dir.join(name);
+        image::RgbaImage::from_pixel(w, h, image::Rgba([200, 120, 40, 255])).save(&path).unwrap();
+        let r = s.execute("file.import", json!({"paths": [path.to_string_lossy()]})).unwrap();
+        items.push(ItemId(r["items"][0].as_u64().unwrap()));
+    }
+    let mut clips = Vec::new();
+    for (k, item) in items.iter().enumerate() {
+        s.execute("source.open", json!({"item": item.0})).unwrap();
+        s.execute("playhead.set", json!({"seconds": 300.0 + 10.0 * k as f64})).unwrap();
+        s.execute("source.overwrite", json!({})).unwrap();
+        let q = s.active_sequence().unwrap();
+        let at = s.playhead();
+        let clip = q.video_tracks[0].items.iter().find(|c| c.item == *item && c.start <= at).unwrap().id;
+        s.execute("timeline.select", json!({"clips": [clip.0]})).unwrap();
+        s.execute("clip.scaleToFrameSize", json!({})).unwrap();
+        assert!(s.active_sequence().unwrap().find_item(clip).unwrap().1.scale_to_frame);
+        clips.push(clip);
+    }
+    let r = s.execute("sequence.autoReframe", json!({"aspect": "9:16"})).unwrap();
+    assert_eq!((r["width"].as_u64(), r["height"].as_u64()), (Some(1080), Some(1920)), "{r}");
+    let q = s.active_sequence().unwrap().clone();
+    assert_eq!(clips.len(), 2);
+    for item in &items {
+        let it = q.all_tracks().flat_map(|t| &t.items).find(|c| c.item == *item).unwrap();
+        let (w, h) = s.project.source_size(*item).unwrap();
+        let cover = (1080.0 / f64::from(w)).max(1920.0 / f64::from(h));
+        let scale = it.effect("motion").unwrap().f64_at("scale", filmcraft_time::Tick::ZERO) / 100.0;
+        assert!((scale - cover).abs() < 1e-6, "{}x{}: scale {scale}, covering the 9:16 frame takes {cover}", w, h);
+    }
+}
