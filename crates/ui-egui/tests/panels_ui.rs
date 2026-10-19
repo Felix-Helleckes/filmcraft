@@ -792,3 +792,35 @@ fn a_project_reopens_in_its_saved_workspace_when_importing_is_on() {
     assert_eq!((app.ui.workspace.as_str(), &app.ui.dock), ("Editing", &editing));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// The saved layout's active tabs win over opening the project's sequence: a Timeline group whose
+/// active tab was Lumetri Scopes reopens with it in front.
+#[test]
+fn a_reopened_layout_keeps_its_active_tabs() {
+    use filmcraft_ui_egui::dock::{DockNode, PanelKind};
+    fn timeline_group(n: &mut DockNode) -> Option<&mut DockNode> {
+        match n {
+            DockNode::Tabs { panels, .. } if panels.contains(&PanelKind::Timeline) => Some(n),
+            DockNode::Split { a, b, .. } => timeline_group(a).or_else(|| timeline_group(b)),
+            _ => None,
+        }
+    }
+    let dir = std::env::temp_dir().join(format!("fc-ws-tabs-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("tabs.fcproj").to_string_lossy().to_string();
+    let mut d = Driver::demo();
+    d.ok("ui.menu.invoke", json!({"id": "window.workspace.importFromProjects"}));
+    {
+        let g = timeline_group(&mut d.app().ui.dock).expect("a Timeline group");
+        *g = DockNode::Tabs { panels: vec![PanelKind::Timeline, PanelKind::LumetriScopes], active: 1 };
+    }
+    d.frames(2);
+    d.exec("file.saveAs", json!({"path": path}));
+    d.ok("ui.menu.invoke", json!({"id": "window.workspace.editing"}));
+    d.frames(2);
+    d.exec("file.open", json!({"path": path}));
+    d.frames(3);
+    let g = timeline_group(&mut d.app().ui.dock).expect("a Timeline group").clone();
+    assert_eq!(g, DockNode::Tabs { panels: vec![PanelKind::Timeline, PanelKind::LumetriScopes], active: 1 }, "Lumetri Scopes stays in front");
+    let _ = std::fs::remove_dir_all(&dir);
+}

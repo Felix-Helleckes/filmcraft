@@ -1733,7 +1733,6 @@ impl FilmcraftApp {
         }
         self.sync_pool();
         self.apply_prefs(&ctx);
-        panels::workspaces::sync_project_layout(self);
         #[cfg(not(target_arch = "wasm32"))]
         self.tick_media_refresh(&ctx);
         for ev in self.session.drain_events() {
@@ -1754,6 +1753,9 @@ impl FilmcraftApp {
                 filmcraft_engine::Event::ProjectChanged { .. } => {}
             }
         }
+        // after opening the project's sequence (which activates the Timeline tab), so the layout
+        // the project saved, active tabs included, is the one shown
+        panels::workspaces::sync_project_layout(self);
         self.sync_timeline_view();
         self.handle_drops(&ctx);
         if let Some(rx) = self.command_inbox.take() {
