@@ -267,6 +267,11 @@ fn a_menu_paste_is_not_repeated_by_its_key_release() {
     menu.send("edit.paste".into()).unwrap();
     d.frames(1);
     assert_eq!(copies(&mut d), n + 1, "the menu pasted");
+    // the key is held for two seconds before it comes up
+    let t0 = d.harness.ctx.input(|i| i.time);
+    while d.harness.ctx.input(|i| i.time) - t0 < 2.0 {
+        d.frames(1);
+    }
     d.ctrl_v_without_text(egui::Modifiers::COMMAND);
     assert_eq!(copies(&mut d), n + 1, "the key release pasted again");
     // a later Cmd+V whose press egui-winit dropped (#611) still pastes

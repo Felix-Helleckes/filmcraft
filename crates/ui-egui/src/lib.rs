@@ -372,7 +372,7 @@ pub struct FilmcraftApp {
     v_down: bool,
     /// When (egui time) the native menu last ran a paste command: on macOS its key equivalent
     /// takes the Cmd+V press, and the release that still reaches egui must not be turned into a
-    /// second press by the #611 workaround (#2361).
+    /// second press by the #611 workaround (#2361). Cleared by that release.
     menu_paste_at: Option<f64>,
     /// OS files/image that were already on the clipboard when the last Copy/Cut ran. Paste ignores
     /// that same media so it pastes the copied clips instead (#697).
@@ -1492,7 +1492,9 @@ impl FilmcraftApp {
             // With no text on the system clipboard, egui-winit drops the Ctrl+V press but still
             // passes its release: put the press back, so Paste can paste files or an image (#611).
             let mut swallowed = None;
-            let menu_pasted = self.menu_paste_at.is_some_and(|t| i.time - t < 1.0);
+            // the V release ends it; the time limit is only a safety net for a release that never
+            // comes (focus lost while the key was down), long enough for a held key
+            let menu_pasted = self.menu_paste_at.is_some_and(|t| i.time - t < 10.0);
             for e in &i.events {
                 match e {
                     egui::Event::Key { key: egui::Key::V, pressed, modifiers: m, .. } => {
