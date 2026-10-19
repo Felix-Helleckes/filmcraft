@@ -643,7 +643,7 @@ pub fn monitor_overlay(app: &mut FilmcraftApp, ui: &mut egui::Ui, pic: Rect, fra
     // ---- text editing
     if let Some(ed) = editing.clone() {
         match views.iter().find(|v| v.clip.0 == ed.clip && v.layer == ed.layer && v.is_text()) {
-            Some(v) => text_edit(app, ui, v, ed, &resp, &mut actions),
+            Some(v) => text_edit(app, ui, v, ed, &resp),
             None => end_edit(app, ui),
         }
     }
@@ -1006,9 +1006,13 @@ fn start_edit_at(app: &mut FilmcraftApp, ui: &egui::Ui, v: &LayerView, p: Pos2, 
     let Some(tp) = text_of(&v.spec) else { return };
     let l = text_layout(tp);
     let caret = v.to_local(p).map_or(tp.text.len(), |(x, y)| l.hit(x, y));
+    // another layer: the edit in progress ends first, so a syllable still being composed reaches
+    // the layer it was typed into (#2501 review)
+    if app.ui.gfx_edit.as_ref().is_some_and(|e| (e.clip, e.layer) != (v.clip.0, v.layer)) {
+        end_edit(app, ui);
+    }
     app.ui.gfx_edit = Some(GfxEdit { clip: v.clip.0, layer: v.layer, caret, anchor: caret, ..Default::default() });
     app.ui.focused = crate::dock::PanelKind::Program;
-    let _ = ui;
     actions.push(("graphics.selectLayer".into(), json!({"clip": v.clip.0, "layers": [v.layer]})));
 }
 
@@ -1028,7 +1032,7 @@ pub(crate) fn select_all_edited_text(app: &mut FilmcraftApp) -> bool {
 }
 
 /// Keyboard handling while a text layer is being edited.
-fn text_edit(app: &mut FilmcraftApp, ui: &mut egui::Ui, v: &LayerView, mut ed: GfxEdit, resp: &egui::Response, actions: &mut Vec<(String, Value)>) {
+fn text_edit(app: &mut FilmcraftApp, ui: &mut egui::Ui, v: &LayerView, mut ed: GfxEdit, resp: &egui::Response) {
     let _ = resp;
     // moving to another panel ends the edit; Properties and Essential Graphics style the text
     // being edited, so working there keeps it (#683). Only a move counts: an edit started with
@@ -1183,8 +1187,14 @@ fn text_edit(app: &mut FilmcraftApp, ui: &mut egui::Ui, v: &LayerView, mut ed: G
             _ => {}
         }
     }
-    if changed && text != tp.text {
-        actions.push(("graphics.setText".into(), json!({"clip": ed.clip, "layer": ed.layer, "text": text, "merge": true})));
+    // written now, not queued with the frame's other actions: an edit that ends later this frame
+    // (Escape, a click elsewhere, another layer) commits what an input method was still composing
+    // against this text, and a queued write would then overwrite that (#2501 review)
+    if changed
+        && text != tp.text
+        && let Err(e) = app.session.execute("graphics.setText", json!({"clip": ed.clip, "layer": ed.layer, "text": text, "merge": true}))
+    {
+        app.ui.status = e.to_string();
     }
     if stop {
         // Escape: the composition ends with the edit (end_edit commits it)

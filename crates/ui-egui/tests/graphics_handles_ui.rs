@@ -385,6 +385,55 @@ fn korean_being_composed_shows_and_is_kept_when_the_edit_ends() {
     assert_eq!(d.exec("graphics.list", json!({}))["layers"][0]["text"], "A한구");
 }
 
+/// #2501 review: a commit, the next syllable's preedit and Escape in one input frame keep both
+/// syllables (the queued write of the commit used to overwrite the preedit's).
+#[test]
+fn a_commit_and_a_preedit_ended_in_one_frame_keep_both() {
+    let mut d = Driver::new();
+    d.ok("ui.set", json!({"tool": "Type"}));
+    d.frames(3);
+    let pic = d.rect("program.picture");
+    d.ok("ui.click", json!({"x": pic[0] + pic[2] * 0.3, "y": pic[1] + pic[3] * 0.2}));
+    d.ok("ui.type", json!({"text": "A"}));
+    d.frames(2);
+    let preedit = |text: &str| egui::Event::Ime(egui::ImeEvent::Preedit { text: text.into(), active_range_chars: None });
+    let esc = egui::Event::Key { key: egui::Key::Escape, physical_key: None, pressed: true, repeat: false, modifiers: Default::default() };
+    d.harness.input_mut().events.extend([egui::Event::Ime(egui::ImeEvent::Commit("한".into())), preedit("구"), esc]);
+    d.frames(3);
+    assert!(d.harness.state().ui.gfx_edit.is_none());
+    assert_eq!(d.exec("graphics.list", json!({}))["layers"][0]["text"], "A한구");
+}
+
+/// #2501 review: starting to edit another text layer while a syllable is being composed puts that
+/// syllable into the layer it was typed in.
+#[test]
+fn editing_another_layer_keeps_the_syllable_being_composed() {
+    let mut d = Driver::new();
+    d.ok("ui.set", json!({"tool": "Type"}));
+    d.frames(3);
+    let pic = d.rect("program.picture");
+    // two text layers in the same graphic: "A" high up, "B" lower down
+    d.ok("ui.click", json!({"x": pic[0] + pic[2] * 0.3, "y": pic[1] + pic[3] * 0.2}));
+    d.ok("ui.type", json!({"text": "A"}));
+    d.ok("ui.key", json!({"key": "Escape"}));
+    d.frames(2);
+    d.ok("ui.click", json!({"x": pic[0] + pic[2] * 0.3, "y": pic[1] + pic[3] * 0.7}));
+    d.ok("ui.type", json!({"text": "B"}));
+    d.frames(2);
+    let preedit = |text: &str| egui::Event::Ime(egui::ImeEvent::Preedit { text: text.into(), active_range_chars: None });
+    d.harness.input_mut().events.push(preedit("한"));
+    d.frames(3);
+    // click into the first layer's text: the edit moves there
+    let list = d.exec("graphics.list", json!({}));
+    let texts: Vec<String> = list["layers"].as_array().unwrap().iter().map(|l| l["text"].as_str().unwrap_or("").to_string()).collect();
+    assert_eq!(texts.len(), 2, "{texts:?}");
+    d.ok("ui.click", json!({"x": pic[0] + pic[2] * 0.3 + 2.0, "y": pic[1] + pic[3] * 0.2}));
+    d.frames(3);
+    let list = d.exec("graphics.list", json!({}));
+    let texts: Vec<String> = list["layers"].as_array().unwrap().iter().map(|l| l["text"].as_str().unwrap_or("").to_string()).collect();
+    assert!(texts.contains(&"B한".to_string()), "the syllable went into the layer it was typed in: {texts:?}");
+}
+
 #[test]
 fn text_properties_switches_between_point_and_paragraph_text() {
     let mut d = Driver::new();
