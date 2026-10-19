@@ -101,6 +101,15 @@ fn paste(s: &mut Session, p: &Value) -> Result<Value> {
     let copied = s.state.effect_clipboard.clone().ok_or_else(|| bad(CMD, "copy an effect first"))?;
     let q = s.active_sequence().ok_or(EngineError::NoSequence)?;
     // clips named in the call are taken as they are; the selection brings its linked partners
+    // every named clip must be a clip id: a malformed one is not silently left out
+    if let Some(v) = p.get("clips").filter(|v| !v.is_null())
+        && !v.as_array().is_some_and(|a| a.iter().all(|c| c.as_u64().is_some()))
+    {
+        return Err(bad(CMD, "`clips` must be a list of clip ids"));
+    }
+    if p.get("clip").is_some_and(|v| !v.is_null() && v.as_u64().is_none()) {
+        return Err(bad(CMD, "`clip` must be a clip id"));
+    }
     let named = p.get("clips").is_some_and(|v| !v.is_null()) || p.get("clip").is_some_and(|v| !v.is_null());
     let clips = if named { clips_p(s, p) } else { with_links(s, &s.state.selection) };
     if let Some(missing) = clips.iter().find(|c| q.find_item(**c).is_none()) {

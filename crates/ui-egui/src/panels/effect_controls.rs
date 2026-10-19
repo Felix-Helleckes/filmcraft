@@ -125,6 +125,11 @@ fn selected_clips(app: &FilmcraftApp) -> Vec<(ClipId, TrackItem, TrackKind)> {
     out
 }
 
+/// The clip Effect Controls shows (the first of the selected clips it lists).
+pub(crate) fn shown_clip(app: &FilmcraftApp) -> Option<ClipId> {
+    selected_clips(app).first().map(|(c, ..)| *c)
+}
+
 pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     let t = app.tokens;
     let clips = selected_clips(app);

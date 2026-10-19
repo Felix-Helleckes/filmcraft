@@ -141,4 +141,17 @@ fn effects_copy_and_paste_from_the_menu_and_the_keyboard() {
     d.frames(3);
     assert_eq!(d.app().session.active_sequence().unwrap().video_tracks[0].items.len(), clips, "Effect Controls never pastes clips");
     assert_eq!(d.blurriness(2), vec![30.0], "and nothing else either: the effects copied before are replaced by the clips");
+
+    // with two clips selected, Cmd+V pastes onto the one Effect Controls shows only (#2471 review)
+    d.right_click("effectControls.effect.gaussian_blur");
+    d.click("effectControls.effect.gaussian_blur.copy");
+    d.exec("timeline.select", json!({"clips": [a, b]}));
+    d.frames(3);
+    let before = (d.blurriness(0).len(), d.blurriness(2).len());
+    d.click("effectControls.effect.motion");
+    d.ok("ui.key", json!({"key": "Cmd+V"}));
+    d.frames(3);
+    let after = (d.blurriness(0).len(), d.blurriness(2).len());
+    let gained = (after.0 - before.0) + (after.1 - before.1);
+    assert_eq!(gained, 1, "one blur, on one clip: {before:?} → {after:?}");
 }

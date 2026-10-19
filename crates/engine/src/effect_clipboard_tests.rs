@@ -129,7 +129,9 @@ fn a_paste_naming_an_unknown_clip_changes_nothing() {
     s.execute("effects.copy", json!({"clip": a.id.0, "indices": [index_of(&a, "motion")]})).unwrap();
     let before = s.project.to_json();
     let undo = s.history.undo.len();
-    assert!(s.execute("effects.paste", json!({"clips": [b.id.0, 987_654]})).is_err());
+    for p in [json!({"clips": [b.id.0, 987_654]}), json!({"clips": [b.id.0, "x"]}), json!({"clips": b.id.0}), json!({"clip": "x"})] {
+        assert!(s.execute("effects.paste", p.clone()).is_err(), "{p}");
+    }
     assert_eq!(s.project.to_json(), before);
     assert_eq!(s.history.undo.len(), undo);
 }

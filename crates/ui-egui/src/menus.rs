@@ -203,7 +203,12 @@ pub fn invoke(app: &mut FilmcraftApp, ctx: &egui::Context, id: &str, mut params:
                 }
                 return Ok(r);
             }
-            "edit.paste" | "edit.pasteInsert" => return invoke(app, ctx, "effects.paste", json!({})),
+            // onto the clip Effect Controls shows, not every selected clip
+            "edit.paste" | "edit.pasteInsert" => {
+                let shown = crate::panels::effect_controls::shown_clip(app);
+                let params = shown.map_or_else(|| json!({}), |c| json!({"clips": [c.0]}));
+                return invoke(app, ctx, "effects.paste", params);
+            }
             _ => {}
         }
     }
