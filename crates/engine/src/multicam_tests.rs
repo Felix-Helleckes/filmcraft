@@ -936,6 +936,17 @@ fn timecode_multicam_groups_takes_into_cameras_by_metadata() {
     let q = s.project.sequence(ItemId(r["sequence"].as_u64().unwrap())).unwrap();
     assert!(q.audio_tracks.iter().all(|t| t.items.iter().all(|i| i.item != items[2])));
     assert_eq!(s.project.root.parent_of(items[2]), Some(s.project.root.id), "the excluded clip was not moved to Processed Clips");
+    // a reference left out for having no timecode says so; one that was never among the items
+    // says that (#2364 review: told apart by id, not by name)
+    let e = on_items(&mut s, "clip.createMulticam", &all, json!({"method": "timecode", "excludeNoTimecode": true, "reference": items[2].0}))
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("has no timecode"), "{e}");
+    let outsider = s.project.items.keys().copied().find(|i| !all.contains(i)).unwrap();
+    let e = on_items(&mut s, "clip.createMulticam", &all, json!({"method": "timecode", "excludeNoTimecode": true, "reference": outsider.0}))
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("not among the items"), "{e}");
 
     // without grouping nothing changes: a camera per clip
     let r = on_items(&mut s, "clip.createMulticam", &[items[0], items[1]], json!({"method": "timecode"})).unwrap();

@@ -655,6 +655,8 @@ fn create_multicam(s: &mut Session, p: &Value) -> Result<Value> {
     // clips without a start timecode: listed in the result, or left out with `excludeNoTimecode`
     let no_timecode: Vec<String> = if by_timecode { clips.iter().filter(|c| !c.has_timecode).map(|c| c.name.clone()).collect() } else { Vec::new() };
     let exclude = by_timecode && bool_p(p, "excludeNoTimecode").unwrap_or(false);
+    // the items left out, by id (names can repeat)
+    let excluded: Vec<ItemId> = if exclude { clips.iter().filter(|c| !c.has_timecode).map(|c| c.item).collect() } else { Vec::new() };
     if exclude {
         clips.retain(|c| c.has_timecode);
     }
@@ -684,7 +686,7 @@ fn create_multicam(s: &mut Session, p: &Value) -> Result<Value> {
         Some(r) => clips.iter().position(|c| c.item == r).ok_or_else(|| {
             // left out on purpose: say why rather than that it isn't there
             let name = s.project.item(r).map(|i| i.name.clone()).unwrap_or_default();
-            if exclude && no_timecode.contains(&name) {
+            if excluded.contains(&r) {
                 bad(cmd, format!("the reference clip {name} has no timecode, so excludeNoTimecode left it out"))
             } else {
                 bad(cmd, "`reference` is not among the items")
