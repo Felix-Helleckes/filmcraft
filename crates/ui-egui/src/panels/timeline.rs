@@ -1783,9 +1783,14 @@ fn snap_candidates(app: &FilmcraftApp, seq: &Sequence, exclude: &[ClipId], to_pl
 
 /// The candidate nearest `t` within [`SNAP_PX`], with its distance in pixels.
 fn nearest_snap(layout: &Layout, cands: &[Tick], t: Tick) -> Option<(f32, Tick)> {
+    nearest_snap_where(layout, cands, t, |_| true)
+}
+
+/// [`nearest_snap`] among the candidates `ok` accepts.
+fn nearest_snap_where(layout: &Layout, cands: &[Tick], t: Tick, ok: impl Fn(Tick) -> bool) -> Option<(f32, Tick)> {
     let x = layout.x_of(t);
     let mut best: Option<(f32, Tick)> = None;
-    for &c in cands {
+    for &c in cands.iter().filter(|c| ok(**c)) {
         let d = (layout.x_of(c) - x).abs();
         if d < SNAP_PX && best.is_none_or(|b| d < b.0) {
             best = Some((d, c));
@@ -2595,7 +2600,9 @@ fn interact(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, layout: &
                 // (distance in px, the edge, where it snaps)
                 let mut best: Option<(f32, Tick, Tick)> = None;
                 for e in edges {
-                    if let Some((d, c)) = nearest_snap(layout, &cands, e + raw)
+                    // a match that would move the block's start before 0 is clamped off its point:
+                    // it can't win (the guide would show a point the edge doesn't reach)
+                    if let Some((d, c)) = nearest_snap_where(layout, &cands, e + raw, |c| c - e >= -first)
                         && best.is_none_or(|b| d < b.0)
                     {
                         best = Some((d, e, c));
