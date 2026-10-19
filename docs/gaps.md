@@ -307,6 +307,9 @@ platforms** G4, G9, G17; **performance** G16; **ecosystem** G11; **measurement**
   release builds transcribe. Transcribe without the model asks first (size, source, licence, the
   audio stays local), downloads it as a cancellable background job and then transcribes. The
   licence check is in [transcripts.md](transcripts.md#models).
+- **Limits:** the release configuration was only built on macOS arm64 (riscv64, FreeBSD and
+  Windows-ARM now compile candle too); release size and build time were not measured; the
+  transcription itself runs on the UI thread until the background-job change lands.
 - **Estimate:** 0 h.
 
 ## G20. The web app shell

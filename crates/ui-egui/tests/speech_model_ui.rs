@@ -1,5 +1,5 @@
-//! Headless UI tests of the speech model download dialog (G19). No network: the test build has no
-//! model downloads, so Download reports why in the dialog.
+//! Headless UI tests of the speech model download dialog (G19). Never on the network: Download is
+//! clicked only in a build without model downloads, where it reports why in the dialog.
 
 use std::sync::mpsc::{Sender, channel};
 
@@ -77,6 +77,13 @@ fn the_download_dialog_names_the_model_licence_and_can_be_cancelled() {
     d.frames(3);
     assert!(d.label("speechModel.license").contains("MIT"), "the licence is shown");
     assert!(!d.label("speechModel.download").is_empty(), "Download and Transcribe is offered");
+    // a build with downloads (the app's default features, unified into this test when built
+    // together) would really download: only a build without them is checked here, offline
+    if d.app().session.is_enabled("transcript.downloadModel") {
+        d.click("speechModel.cancel");
+        assert!(d.app().ui.speech_download.is_none(), "Cancel closes it");
+        return;
+    }
     // this build has no downloads: the dialog says so and starts nothing
     d.click("speechModel.download");
     d.frames(2);
