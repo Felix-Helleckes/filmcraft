@@ -132,9 +132,15 @@ fn wheel_over_track_headers_changes_track_heights() {
     wheel(&mut d, "timeline.track.A1.target", -40.0, json!({"shift": true}));
     let (v2, a2) = d.heights();
     assert!(v2 < v && a2 < 60.0, "{v2} {a2}");
-    // over the clips Option + wheel zooms time, as before
+    // over the clips Option + wheel zooms time and Shift + wheel scrolls sideways, as before
     let pps = d.app().ui.timeline.target_pps;
     wheel(&mut d, "timeline.tracks", 40.0, json!({"alt": true}));
     assert_eq!(d.heights(), (v2, a2));
     assert!(d.app().ui.timeline.target_pps != pps);
+    d.ok("ui.set", json!({"timeline": {"scroll": 2.0}}));
+    d.frames(2);
+    let scroll = d.app().ui.timeline.target_scroll;
+    wheel(&mut d, "timeline.tracks", 40.0, json!({"shift": true}));
+    assert_eq!(d.heights(), (v2, a2));
+    assert!(d.app().ui.timeline.target_scroll != scroll, "Shift + wheel over the clips scrolls sideways");
 }
