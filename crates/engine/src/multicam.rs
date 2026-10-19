@@ -681,7 +681,15 @@ fn create_multicam(s: &mut Session, p: &Value) -> Result<Value> {
         clips = v.into_iter().map(|x| x.2).collect();
     }
     let reference = match item_p(p, "reference") {
-        Some(r) => clips.iter().position(|c| c.item == r).ok_or_else(|| bad(cmd, "`reference` is not among the items"))?,
+        Some(r) => clips.iter().position(|c| c.item == r).ok_or_else(|| {
+            // left out on purpose: say why rather than that it isn't there
+            let name = s.project.item(r).map(|i| i.name.clone()).unwrap_or_default();
+            if exclude && no_timecode.contains(&name) {
+                bad(cmd, format!("the reference clip {name} has no timecode, so excludeNoTimecode left it out"))
+            } else {
+                bad(cmd, "`reference` is not among the items")
+            }
+        })?,
         None => 0,
     };
     let audio = match str_p(p, "audio") {

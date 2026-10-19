@@ -942,3 +942,22 @@ fn timecode_multicam_groups_takes_into_cameras_by_metadata() {
     assert_eq!(r["cameras"].as_array().unwrap().len(), 2);
     assert_eq!(r["noTimecode"], json!([]));
 }
+
+/// #2364 review: without grouping, a subclip of a camera file with sound brings its camera's
+/// audio track (it used to get none: the subclip itself was asked whether it has audio, not its
+/// media); and a reference left out by `excludeNoTimecode` says why.
+#[test]
+fn an_ungrouped_subclip_camera_keeps_its_sound() {
+    let Some((a, b, _)) = fixtures() else { return };
+    let mut s = Session::default();
+    let items = import(&mut s, &[&a, &b]);
+    let sub = ItemId(
+        s.execute("clip.makeSubclip", json!({"item": items[0].0, "startFrame": 0, "endFrame": 96, "name": "A take"})).unwrap()["item"].as_u64().unwrap(),
+    );
+    let r = on_items(&mut s, "clip.createMulticam", &[sub, items[1]], json!({"method": "in", "audio": "all"})).unwrap();
+    let q = s.project.sequence(ItemId(r["sequence"].as_u64().unwrap())).unwrap().clone();
+    let mc = q.multicam.as_ref().unwrap();
+    assert_eq!(mc.cameras.len(), 2);
+    assert!(!mc.cameras[0].audio_tracks.is_empty(), "the subclip camera has its file's sound: {:?}", mc.cameras[0]);
+    assert!(q.audio_tracks.iter().any(|t| t.items.iter().any(|c| c.item == sub)), "its audio is in the sequence");
+}
