@@ -470,13 +470,21 @@ pub(crate) fn move_layers(s: &mut Session, clip: ClipId, moves: Vec<(usize, Vec2
     s.edit_sequence(label, |q, _, _| {
         let (_, it) = q.find_item_mut(clip).ok_or(filmcraft_edit::EditError::NoItem(clip))?;
         let mt = it.source_time_at(tl.clamp(it.start, it.end() - Tick(1)));
+        // the layers moving now, by uid: one pinned to one of them moves with it already
+        let moving: Vec<u64> = moves.iter().filter_map(|(ei, _)| it.effects.get(*ei)?.layer.as_ref().map(|x| x.uid)).filter(|&u| u != 0).collect();
         for (ei, pos) in &moves {
             let Some(e) = it.effects.get_mut(*ei) else { continue };
             let Some(prm) = e.params.get_mut("position") else { continue };
             let old = prm.value_at(mt).as_vec2().unwrap_or(*pos);
             prm.set_at(mt, ParamValue::Vec2(*pos));
-            // a pinned layer keeps following its target from its new place
-            if let Some(pin) = e.layer.as_mut().and_then(|x| x.pin.as_mut()) {
+            // a pinned layer keeps following its target from its new place; when the target
+            // moves too, following it is the whole move (#2363 review: it moved twice)
+            let target_moves = e
+                .layer
+                .as_ref()
+                .and_then(|x| x.pin.as_ref())
+                .is_some_and(|p| matches!(p.to, filmcraft_project::graphic_design::PinTarget::Layer(u) if moving.contains(&u)));
+            if let Some(pin) = e.layer.as_mut().and_then(|x| x.pin.as_mut()).filter(|_| !target_moves) {
                 let (dx, dy) = (pos.x - old.x, pos.y - old.y);
                 pin.offsets[0] += dx;
                 pin.offsets[2] += dx;

@@ -719,3 +719,31 @@ fn selected_layers_move_together_in_one_undo_step() {
     assert!(s.execute("graphics.moveLayers", json!({"clip": clip, "layers": [9], "delta": [1, 1]})).is_err());
     assert!(s.execute("graphics.moveLayers", json!({"clip": clip, "layers": [0]})).is_err());
 }
+
+/// #2363 review: a pinned layer moved together with the layer it is pinned to moves once, with
+/// it, not twice (once with its target, once by its own offsets); undo puts both back.
+#[test]
+fn a_pinned_layer_moved_with_its_target_moves_once() {
+    let mut s = demo();
+    let clip = three_shapes(&mut s);
+    s.execute("graphics.pin", json!({"clip": clip, "layer": 0, "to": 1, "edges": ["left", "top"]})).unwrap();
+    // where each layer is shown, pins resolved (not the position stored in it)
+    let shown = |s: &Session, l: usize| {
+        let q = s.active_sequence().unwrap();
+        let (_, it) = q.find_item(ClipId(clip)).unwrap();
+        let ei = layer_indices(&it.effects)[l];
+        let specs = filmcraft_render::graphic_clip::item_layer_specs(it, Tick::ZERO, (q.settings.width, q.settings.height));
+        specs.iter().find(|(x, _)| *x == ei).unwrap().1.transform.position
+    };
+    let (p0, p1) = (shown(&s, 0), shown(&s, 1));
+    s.execute("graphics.moveLayers", json!({"clip": clip, "layers": [0, 1], "delta": [40, -25]})).unwrap();
+    let (a0, a1) = (shown(&s, 0), shown(&s, 1));
+    assert!((a1.x - p1.x - 40.0).abs() < 1e-6 && (a1.y - p1.y + 25.0).abs() < 1e-6, "the target moved: {p1:?} → {a1:?}");
+    assert!((a0.x - p0.x - 40.0).abs() < 1e-6 && (a0.y - p0.y + 25.0).abs() < 1e-6, "the pinned layer moved once: {p0:?} → {a0:?}");
+    // moved on its own it still moves (its offsets to the target change)
+    s.execute("graphics.moveLayers", json!({"clip": clip, "layers": [0], "delta": [10, 0]})).unwrap();
+    assert!((shown(&s, 0).x - a0.x - 10.0).abs() < 1e-6);
+    s.execute("edit.undo", json!({})).unwrap();
+    s.execute("edit.undo", json!({})).unwrap();
+    assert_eq!((shown(&s, 0), shown(&s, 1)), (p0, p1), "undo puts both back");
+}
