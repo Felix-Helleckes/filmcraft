@@ -426,6 +426,8 @@ pub fn install(ctx: &egui::Context, t: &Tokens) {
 /// in their simplified forms (#2022); Japanese first otherwise, so Japanese text keeps Japanese
 /// forms. Chinese faces still cover the hanzi Japanese fonts lack, and the other way round.
 pub(crate) fn chinese_first(language: crate::i18n::Language) -> bool {
+    // Simplified Chinese is the only Chinese interface so far: a Traditional Chinese one (zh-TW)
+    // must be added here too, or it gets Japanese forms for the shared code points (#2500 review)
     language == crate::i18n::Language::ZhCn
 }
 
