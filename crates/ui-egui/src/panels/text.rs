@@ -699,6 +699,18 @@ fn style_strip(app: &mut FilmcraftApp, ui: &mut egui::Ui, r: Rect, track_idx: us
                 actions.push(("captions.setStyle".into(), json!({"track": tr.id.0, "anchor": name})));
             }
         }
+        // a free position from there, in percent of the frame (#2476)
+        for (i, key, label) in [(0, "offsetX", "X"), (1, "offsetY", "Y")] {
+            let mut pct = st.offset[i] * 100.0;
+            let resp = ui
+                .add(crate::widgets::number_drag(&mut pct).range(-100.0..=100.0).speed(0.2).prefix(format!("{label} ")).suffix(" %"))
+                .on_hover_text(tl!("Move the captions from their position, in percent of the frame"));
+            app.auto.add(&format!("text.captions.style.{key}"), resp.rect, label);
+            let escaped = resp.drag_stopped() && ui.input(|i| i.key_pressed(egui::Key::Escape));
+            if !escaped && (resp.drag_stopped() || (resp.changed() && !resp.dragged())) {
+                actions.push(("captions.setStyle".into(), json!({"track": tr.id.0, key: pct / 100.0})));
+            }
+        }
     });
 }
 
