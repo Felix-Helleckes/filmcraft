@@ -12,6 +12,7 @@ use std::sync::mpsc::{Sender, channel};
 use egui_kittest::Harness;
 use filmcraft_engine::Session;
 use filmcraft_engine::project::{ItemId, ItemKind, Label, MediaClip, MediaRef, Project, SequenceSettings, TrackKind};
+use filmcraft_engine::project::{ItemKind, Label, MediaClip, MediaRef, Project, SequenceSettings, TrackKind};
 use filmcraft_media::generators::GeneratorSource;
 use filmcraft_media::{DemoScene, Generator, MediaSource};
 use filmcraft_time::{FrameRate, Tick, TimeRange};
@@ -431,4 +432,29 @@ fn create_multicam_groups_takes_by_camera_label() {
     assert_eq!(x.items[1].start - x.items[0].start, rate.tick_of(96));
     assert_eq!(q.video_tracks[1].items[0].start - x.items[0].start, rate.tick_of(24));
     assert!(q.video_tracks.iter().flat_map(|t| &t.items).all(|i| i.item.0 != items[3]), "Cam D was left out");
+}
+
+/// #1362: with nothing selected in the Project panel, Create Multi-Camera Source Sequence works on
+/// the clips selected in the Timeline.
+#[test]
+fn create_multicam_from_clips_selected_in_the_timeline() {
+    let (s, items) = session();
+    let mut d = Driver::new(s);
+    for (k, item) in items.iter().enumerate() {
+        d.exec("source.open", json!({"item": item}));
+        d.exec("playhead.set", json!({"frame": k as i64 * 96}));
+        d.exec("source.overwrite", json!({}));
+    }
+    let clips: Vec<u64> = d.app().session.active_sequence().unwrap().video_tracks[0].items.iter().map(|c| c.id.0).collect();
+    assert_eq!(clips.len(), 4);
+    d.exec("project.select", json!({"items": []}));
+    d.exec("timeline.select", json!({"clips": clips}));
+    d.ok("ui.menu.invoke", json!({"id": "clip.createMulticam"}));
+    d.frames(3);
+    assert_eq!(d.app().ui.sync_dialog.as_ref().map(|x| x.items.clone()), Some(items.clone()), "the dialog takes the Timeline clips' media");
+    d.click("mcam.method.in");
+    d.click("mcam.ok");
+    assert!(d.app().ui.sync_dialog.is_none(), "dialog closed: {}", d.app().ui.status);
+    let src = d.app().session.state.project_selection[0];
+    assert_eq!(d.app().session.project.sequence(src).unwrap().multicam.clone().unwrap().cameras.len(), 4);
 }
