@@ -740,6 +740,10 @@ pub fn menu_items(app: &FilmcraftApp) -> Vec<MenuItem> {
             "app.language.korean" => it.checked = Some(app.ui.language == crate::i18n::Language::Ko),
             _ => {}
         }
+        // Paste in Effect Controls pastes copied effects (`invoke`), whatever the clip clipboard holds
+        if app.ui.focused == PanelKind::EffectControls && matches!(it.id.as_str(), "edit.paste" | "edit.pasteInsert") {
+            it.enabled = app.session.is_enabled("effects.paste");
+        }
         if it.id.starts_with("view.") {
             it.checked = crate::panels::monitor_view::checked(app, &it.id).or(crate::panels::menu_dialogs::checked(app, &it.id));
             it.enabled &= crate::panels::monitor_view::enabled(app, &it.id);

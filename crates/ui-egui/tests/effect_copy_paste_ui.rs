@@ -145,6 +145,14 @@ fn effects_copy_and_paste_from_the_menu_and_the_keyboard() {
     // with two clips selected, Cmd+V pastes onto the one Effect Controls shows only (#2471 review)
     d.right_click("effectControls.effect.gaussian_blur");
     d.click("effectControls.effect.gaussian_blur.copy");
+    // Edit ▸ Paste is enabled for the copied effects with Effect Controls focused, even with an
+    // empty clip clipboard (#2471 review)
+    d.app().session.state.clipboard.clear();
+    let paste = |d: &mut Driver| filmcraft_ui_egui::menus::menu_items(d.app()).into_iter().find(|m| m.id == "edit.paste").unwrap().enabled;
+    assert!(paste(&mut d), "Paste is enabled for copied effects");
+    d.click(&format!("timeline.clip.{b}"));
+    assert!(!paste(&mut d), "the Timeline has no clips to paste");
+    d.click("effectControls.effect.gaussian_blur");
     d.exec("timeline.select", json!({"clips": [a, b]}));
     d.frames(3);
     let before = (d.blurriness(0).len(), d.blurriness(2).len());
