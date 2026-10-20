@@ -53,7 +53,9 @@ updates the list; a key bound to a deleted preset comes back to life with a pres
 The id follows the name, so renaming a preset leaves its key on the old id. Two presets whose names
 give the same id (`Fade In` and `fade-in`) share one command, which applies the first of them; so
 after a rename the old key applies the first preset that still has that id, and when none has, it
-does nothing until it is bound again (or a preset gets the old name back).
+does nothing until it is bound again (or a preset gets the old name back). A preset name needs a letter
+or a digit, so that it gives an id: saving or renaming to a name like `???` is refused, and an
+imported preset named that way is skipped (listed under `skipped` in `presets.import`'s answer).
 
 ## Skipped Premiere default shortcuts
 

@@ -726,8 +726,10 @@ impl Session {
         if self.exec_depth == 0 {
             source_monitor::track_history(self);
         }
-        // a saved, deleted, renamed or imported preset changes the preset commands (#1356)
-        if r.is_ok() && matches!(id, "presets.save" | "presets.delete" | "presets.rename" | "presets.import") {
+        // a saved, deleted, renamed or imported preset changes the preset commands (#1356); also
+        // after an error, which can come after the library changed in memory (a file that could not
+        // be written): the commands always follow the library
+        if matches!(id, "presets.save" | "presets.delete" | "presets.rename" | "presets.import") {
             self.shortcuts.set_dynamic(presets::shortcut_commands(&self.presets));
         }
         // source graphics: an edited instance updates the shared layers and the other instances

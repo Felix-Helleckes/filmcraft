@@ -300,4 +300,12 @@ fn every_preset_is_a_shortcut_command() {
     s.execute("presets.delete", json!({"name": "Soft Glow!"})).unwrap();
     assert!(!ids(&mut s, "Soft Glow").contains(&"presets.apply.soft-glow".to_string()));
     assert!(s.execute("presets.apply.soft-glow", json!({})).is_err());
+    // a name without a letter or digit would give no command: refused (#2377 review)
+    let user = s.presets.user.len();
+    let e = s.execute("presets.save", json!({"clip": clips[0].0, "name": "???", "effects": [bi]})).unwrap_err().to_string();
+    assert!(e.contains("letter or a digit"), "{e}");
+    assert_eq!(s.presets.user.len(), user);
+    s.execute("presets.save", json!({"clip": clips[0].0, "name": "Glow 2", "effects": [bi]})).unwrap();
+    assert!(s.execute("presets.rename", json!({"name": "Glow 2", "to": "--"})).is_err());
+    assert!(s.presets.user.iter().any(|x| x.name == "Glow 2"), "the rename changed nothing");
 }
