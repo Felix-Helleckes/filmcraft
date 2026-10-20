@@ -549,6 +549,8 @@ impl Shortcuts {
     /// disappears stay in the set, as they do for any command, and come back with it.
     pub fn set_dynamic(&mut self, cmds: Vec<CommandInfo>) {
         self.dynamic = cmds;
+        // the UI rebuilds its bindings and key map from the new list
+        self.revision = self.revision.wrapping_add(1);
     }
 
     pub fn command(&self, id: &str) -> Option<CommandInfo> {

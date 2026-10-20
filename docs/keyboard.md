@@ -50,9 +50,10 @@ listed by its name: `presets.apply.<name>`, the name lower-cased with other char
 (`Blur In (Short)` → `presets.apply.blur-in-short`). A key bound to it applies the preset to the
 selected clips, like dragging it onto them (#1356). Saving, renaming, deleting or importing presets
 updates the list; a key bound to a deleted preset comes back to life with a preset of that name.
-The id follows the name, so renaming a preset leaves its key on the old id: the key does nothing
-until it is bound again (or a preset gets the old name back). Two presets whose names give the
-same id (`Fade In` and `fade-in`) share one command, which applies the first of them.
+The id follows the name, so renaming a preset leaves its key on the old id. Two presets whose names
+give the same id (`Fade In` and `fade-in`) share one command, which applies the first of them; so
+after a rename the old key applies the first preset that still has that id, and when none has, it
+does nothing until it is bound again (or a preset gets the old name back).
 
 ## Skipped Premiere default shortcuts
 

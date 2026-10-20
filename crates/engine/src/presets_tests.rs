@@ -280,8 +280,11 @@ fn every_preset_is_a_shortcut_command() {
     s.state.selection = vec![clips[0]];
     s.execute("effects.apply", json!({"effect": "gaussian_blur"})).unwrap();
     let bi = item(&s, clips[0]).effects.iter().position(|e| e.effect == "gaussian_blur").unwrap();
+    let revision = s.shortcuts.revision;
     s.execute("presets.save", json!({"clip": clips[0].0, "name": "Soft Glow!", "effects": [bi]})).unwrap();
     assert!(ids(&mut s, "Soft Glow").contains(&"presets.apply.soft-glow".to_string()));
+    // the running UI rebuilds its key map from the new commands (#2377 review)
+    assert_ne!(s.shortcuts.revision, revision);
     let info = s.shortcuts.command("presets.apply.soft-glow").unwrap();
     assert_eq!((info.label.as_str(), info.category.as_str()), ("Soft Glow!", "Presets"));
     s.execute("shortcuts.set", json!({"command": "presets.apply.soft-glow", "keys": "Ctrl+Alt+G"})).unwrap();
