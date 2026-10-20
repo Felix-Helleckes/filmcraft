@@ -413,19 +413,35 @@ fn paragraph(text: &str, base: usize, sty: &Styles, para: &ParagraphStyle) -> Ve
             (b, c, sc, face, bidi.levels[b].is_rtl(), small, si)
         })
         .collect();
-    // An emoji sequence stays in one face, for the font to combine it (#2528): variation
-    // selectors, joiners and modifiers take the face of the character before them, and the emoji
-    // after a joiner prefers it too.
-    let mut prev: Option<(char, FaceId)> = None;
-    for ch in &mut chars {
-        if let Some((pc, pf)) = prev {
-            if fonts::joins_previous(ch.2) {
-                ch.3 = pf;
-            } else if pc == '\u{200D}' && fonts::is_emoji(ch.2) {
-                ch.3 = fonts::fallback_for(ch.2, pf);
+    // An emoji sequence is laid out in one face, for the font to combine it (#2528): variation
+    // selectors, joiners and modifiers belong to the character before them, and emoji joined by a
+    // ZWJ to the one before; the whole sequence takes a face covering all of its emoji.
+    let mut i = 0;
+    while i < chars.len() {
+        let mut j = i + 1;
+        let mut zwj = false;
+        while let Some(c) = chars.get(j).map(|c| c.2) {
+            let after_zwj = j.checked_sub(1).and_then(|p| chars.get(p)).is_some_and(|p| p.2 == '\u{200D}');
+            if !(fonts::joins_previous(c) || (after_zwj && fonts::is_emoji(c))) {
+                break;
+            }
+            zwj |= c == '\u{200D}';
+            j += 1;
+        }
+        if let Some(seq) = chars.get_mut(i..j)
+            && let Some(first) = seq.first().map(|c| c.3)
+        {
+            let face = if zwj {
+                let emoji: String = seq.iter().map(|c| c.2).filter(|c| !fonts::joins_previous(*c)).collect();
+                fonts::fallback_for_text(&emoji, first)
+            } else {
+                first
+            };
+            for ch in seq {
+                ch.3 = face;
             }
         }
-        prev = Some((ch.2, ch.3));
+        i = j;
     }
     // items: runs of equal (face, rtl, small, style)
     let mut items: Vec<Item> = Vec::new();
@@ -1159,6 +1175,10 @@ mod tests {
         let faces: Vec<FaceId> = l.glyphs.iter().map(|g| g.face).collect();
         assert!(faces.windows(2).all(|w| w[0] == w[1]), "{faces:?}");
         assert!(l.glyphs.iter().all(|g| g.id != 0), "no missing-glyph box: {:?}", l.glyphs.iter().map(|g| g.id).collect::<Vec<_>>());
+        // emoji joined by a ZWJ are one sequence: every character of it in one face
+        let l = layout("x\u{2192}\u{200D}\u{2194}\u{FE0F}y", &st(40.0), &ParagraphStyle::default());
+        let seq: Vec<FaceId> = l.glyphs.iter().filter(|g| (1..14).contains(&g.cluster)).map(|g| g.face).collect();
+        assert!(!seq.is_empty() && seq.windows(2).all(|w| w[0] == w[1]), "{seq:?}");
     }
 
     #[test]

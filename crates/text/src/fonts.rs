@@ -497,11 +497,31 @@ pub fn fallback_for(c: char, prefer: FaceId) -> FaceId {
             scan_system();
             all_faces()
         };
-        if let Some(id) = emoji_face(&faces, c) {
+        if let Some(id) = emoji_face(&faces, c.encode_utf8(&mut [0; 4])) {
             return id;
         }
     }
     prefer
+}
+
+/// A face that covers every character of `text` (an emoji ZWJ sequence without its joiners), so
+/// the sequence is shaped as one: `prefer` when it does, else a loaded face, else a system emoji
+/// face; `prefer` when none does.
+pub fn fallback_for_text(text: &str, prefer: FaceId) -> FaceId {
+    if face(prefer).covers_text(text) {
+        return prefer;
+    }
+    let faces = all_faces();
+    if let Some(f) = faces.iter().find(|f| f.bytes.get().is_some() && f.covers_text(text)) {
+        return f.id;
+    }
+    let faces = if system_scanned() {
+        faces
+    } else {
+        scan_system();
+        all_faces()
+    };
+    emoji_face(&faces, text).unwrap_or(prefer)
 }
 
 /// Whether `c` is a pictograph that an emoji font draws (#2528): the emoji blocks, the symbols and
@@ -522,27 +542,27 @@ pub fn joins_previous(c: char) -> bool {
 /// loaded until used, so they are probed without keeping the file (once per character while the
 /// list of faces stays the same: the answers are kept). Faces without outlines (Apple Color Emoji's bitmaps) are not listed at
 /// all (`sfnt::read_faces`), so what is found draws, in the text's colour.
-fn emoji_face(faces: &[Arc<Face>], c: char) -> Option<FaceId> {
-    // per character: the number of faces it was asked with, and the answer
-    static SEEN: OnceLock<Mutex<HashMap<char, (usize, Option<FaceId>)>>> = OnceLock::new();
+fn emoji_face(faces: &[Arc<Face>], text: &str) -> Option<FaceId> {
+    // per text: the number of faces it was asked with, and the answer
+    static SEEN: OnceLock<Mutex<HashMap<String, (usize, Option<FaceId>)>>> = OnceLock::new();
     let seen = SEEN.get_or_init(Default::default);
-    if let Some((_, found)) = seen.lock().unwrap_or_else(|e| e.into_inner()).get(&c).copied().filter(|(n, _)| *n == faces.len()) {
+    if let Some((_, found)) = seen.lock().unwrap_or_else(|e| e.into_inner()).get(text).copied().filter(|(n, _)| *n == faces.len()) {
         return found;
     }
-    let found = pick_emoji_face(faces, c);
+    let found = pick_emoji_face(faces, text);
     let mut seen = seen.lock().unwrap_or_else(|e| e.into_inner());
     if seen.len() > 4096 {
         seen.clear();
     }
-    seen.insert(c, (faces.len(), found));
+    seen.insert(text.to_string(), (faces.len(), found));
     found
 }
 
 /// [`emoji_face`] without the memo: emoji families first, a loaded one before one on disk.
-fn pick_emoji_face(faces: &[Arc<Face>], c: char) -> Option<FaceId> {
+fn pick_emoji_face(faces: &[Arc<Face>], text: &str) -> Option<FaceId> {
     let mut emoji: Vec<&Arc<Face>> = faces.iter().filter(|f| f.info.family.to_ascii_lowercase().contains("emoji")).collect();
     emoji.sort_by_key(|f| f.bytes.get().is_none());
-    emoji.into_iter().find(|f| f.covers_text(c.encode_utf8(&mut [0; 4]))).map(|f| f.id)
+    emoji.into_iter().find(|f| f.covers_text(text)).map(|f| f.id)
 }
 
 #[cfg(test)]
@@ -682,11 +702,11 @@ mod tests {
         let arrow = '\u{2192}';
         assert!(is_emoji(arrow) && face(0, "Inter").has_char(arrow));
         let faces = [face(0, "Inter Copy"), face(1, "Segoe UI Emoji")];
-        assert_eq!(pick_emoji_face(&faces, arrow), Some(1));
+        assert_eq!(pick_emoji_face(&faces, &arrow.to_string()), Some(1));
         assert!(faces[1].bytes.get().is_none(), "probing doesn't keep the file");
         // nothing covers it: no face
-        assert_eq!(pick_emoji_face(&faces, '\u{1FAE8}'), None);
-        assert_eq!(pick_emoji_face(&faces[..1], arrow), None);
+        assert_eq!(pick_emoji_face(&faces, "\u{1FAE8}"), None);
+        assert_eq!(pick_emoji_face(&faces[..1], &arrow.to_string()), None);
         // the sequence characters belong to the emoji before them
         for c in ['\u{FE0F}', '\u{200D}', '\u{1F3FD}', '\u{20E3}'] {
             assert!(joins_previous(c), "{c:?}");
@@ -696,5 +716,12 @@ mod tests {
         // an emoji in a bundled family looks among the system fonts too: they get scanned
         let _ = fallback_for('\u{1F600}', resolve(DEFAULT_FAMILY, "Regular").face);
         assert!(system_scanned(), "the system fonts were scanned for an emoji font");
+        // a whole sequence: the preferred face when it covers it all, else one that does
+        let inter = resolve(DEFAULT_FAMILY, "Regular").face;
+        assert_eq!(fallback_for_text("ab", inter), inter);
+        let mono = resolve("JetBrains Mono", "Regular").face;
+        let both = fallback_for_text("a\u{2192}", mono);
+        assert!(super::face(both).covers_text("a\u{2192}"), "{both}: one face for the whole sequence");
+        assert_eq!(fallback_for_text("\u{10FFFD}", inter), inter, "nothing covers it: the preferred face");
     }
 }
