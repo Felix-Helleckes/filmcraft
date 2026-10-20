@@ -428,4 +428,18 @@ fn font_size_follows_the_selected_characters() {
     d.frames(3);
     let after = run_size(&mut d).expect("the selected characters got a size");
     assert!(after > 120.0, "the drag grows the selection's size by the whole drag, not one step: {after}");
+
+    // a typed size takes, and a drag then starts from it, not from the size shown before (#2522 review)
+    d.ok("ui.click", json!({"id": "graphics.prop.size"}));
+    d.frames(2);
+    d.ok("ui.key", json!({"key": "Cmd+A"}));
+    d.ok("ui.type", json!({"text": "60"}));
+    d.ok("ui.key", json!({"key": "Enter"}));
+    d.frames(3);
+    assert_eq!(run_size(&mut d), Some(60.0), "the typed size is the selection's");
+    let r = d.rect("graphics.prop.size");
+    d.ok("ui.drag", json!({"from":{"x":r[0]+r[2]/2.0,"y":r[1]+r[3]/2.0},"to":{"x":r[0]+r[2]/2.0+20.0,"y":r[1]+r[3]/2.0},"steps":4}));
+    d.frames(3);
+    let dragged = run_size(&mut d).unwrap();
+    assert!(dragged > 60.0 && dragged < after - 10.0, "the drag grows 60, not the earlier {after}: {dragged}");
 }
