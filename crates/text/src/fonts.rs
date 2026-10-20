@@ -488,10 +488,18 @@ pub fn fallback_for(c: char, prefer: FaceId) -> FaceId {
             return f.id;
         }
     }
-    if is_emoji(c)
-        && let Some(id) = emoji_face(&faces, c)
-    {
-        return id;
+    if is_emoji(c) {
+        // the system emoji font is one of the system faces, which a document using only bundled
+        // families never had scanned (#2561 review): scan once, then look
+        let faces = if system_scanned() {
+            faces
+        } else {
+            scan_system();
+            all_faces()
+        };
+        if let Some(id) = emoji_face(&faces, c) {
+            return id;
+        }
     }
     prefer
 }
@@ -685,5 +693,8 @@ mod tests {
         }
         assert!(!joins_previous('a') && !is_emoji('a') && is_emoji('\u{1F600}'));
         let _ = std::fs::remove_file(&path);
+        // an emoji in a bundled family looks among the system fonts too: they get scanned
+        let _ = fallback_for('\u{1F600}', resolve(DEFAULT_FAMILY, "Regular").face);
+        assert!(system_scanned(), "the system fonts were scanned for an emoji font");
     }
 }
