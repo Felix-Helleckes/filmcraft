@@ -29,6 +29,8 @@ fn auto_reframe_sequence_fills_a_vertical_copy() {
     assert_eq!((r["width"].as_u64(), r["height"].as_u64()), (Some(1080), Some(1920)), "{r}");
     assert_ne!(id, source);
     assert_eq!(s.state.active_sequence, Some(id), "the new sequence opens");
+    // and its Timeline is shown, even when the panel was closed (#2453 review)
+    assert!(s.drain_events().contains(&crate::Event::OpenSequence(id)));
     assert!(s.project.item(id).unwrap().name.ends_with("Vertical 9x16"), "{r}");
     assert_eq!(s.project.sequence(source).unwrap(), &before, "the original is untouched");
 

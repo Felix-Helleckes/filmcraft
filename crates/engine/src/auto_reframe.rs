@@ -204,6 +204,8 @@ fn run(s: &mut Session, p: &Value) -> Result<Value> {
         st.selection.clear();
         Ok((id, clips))
     })?;
+    // Shows the new sequence's Timeline, restoring the panel if it was closed.
+    s.events.push(crate::Event::OpenSequence(id));
     Ok(json!({"sequence": id.0, "name": name, "width": size.0, "height": size.1, "clips": clips}))
 }
 
