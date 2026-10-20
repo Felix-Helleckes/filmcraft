@@ -153,7 +153,9 @@ pub fn render_caption(c: &Caption, style: &CaptionStyle, w: usize, h: usize) -> 
             CaptionAlign::Center => (w as f32 - lw) / 2.0,
         })
         .collect();
-    let (lo, hi) = (xs.iter().fold(f32::MAX, |m, x| m.min(*x - pad_x)), xs.iter().zip(&widths).fold(f32::MIN, |m, (x, lw)| m.max(x + lw + pad_x)));
+    // the outline grows the block too: it stays inside the frame as well (#2526 review)
+    let edge = pad_x + ((style.outline * scale).max(0.0)).ceil() + 1.0;
+    let (lo, hi) = (xs.iter().fold(f32::MAX, |m, x| m.min(*x - edge)), xs.iter().zip(&widths).fold(f32::MIN, |m, (x, lw)| m.max(x + lw + edge)));
     let dx = if lo.is_finite() && hi.is_finite() { dx.clamp(-lo.max(0.0), (w as f32 - hi).max(0.0)) } else { 0.0 };
     let xs: Vec<f32> = xs.into_iter().map(|x| x + dx).collect();
     let outline = (style.outline * scale).max(0.0);
@@ -291,8 +293,8 @@ mod tests {
         let o = render_caption(&cap("Hello"), &st, 1920, 1080).unwrap();
         assert!((o.x - base.x - 192).abs() <= 1, "x {} → {}", base.x, o.x);
         assert!((o.y - base.y + 216).abs() <= 1, "y {} → {}", base.y, o.y);
-        for offset in [[1.0, 1.0], [-1.0, -1.0], [f32::NAN, f32::INFINITY]] {
-            let st = CaptionStyle { offset, ..Default::default() };
+        for (offset, outline) in [([1.0, 1.0], 0.0), ([-1.0, -1.0], 0.0), ([f32::NAN, f32::INFINITY], 0.0), ([1.0, 0.0], 12.0), ([-1.0, 0.0], 12.0)] {
+            let st = CaptionStyle { offset, outline, ..Default::default() };
             let o = render_caption(&cap("Hello"), &st, 1920, 1080).unwrap();
             let (x1, y1) = (i64::from(o.x) + o.w as i64, i64::from(o.y) + o.h as i64);
             assert!(o.x >= -2 && x1 <= 1922 && o.y >= -2 && y1 <= 1082, "{offset:?}: {} {} {} {}", o.x, o.y, o.w, o.h);
