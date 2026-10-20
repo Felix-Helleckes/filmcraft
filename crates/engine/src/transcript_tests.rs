@@ -228,3 +228,27 @@ fn a_cancelled_or_outdated_background_transcription_stores_nothing() {
     finish_job(&mut s, id);
     assert!(s.project.transcripts.is_empty(), "another project: nothing stored in it");
 }
+
+/// #2517 review: a catalogue model is loaded in the background job, not before it: the call
+/// returns the job at once, and a model that can't be loaded (here: not downloaded) ends the job
+/// with the reason and stores nothing.
+#[cfg(feature = "whisper")]
+#[test]
+fn a_background_transcription_loads_its_model_in_the_job() {
+    let (mut s, item, _) = session();
+    s.transcriber = None;
+    let model = "whisper-tiny";
+    let dir = crate::transcript::models_dir();
+    let m = filmcraft_speech::models::find(model).unwrap();
+    if dir.as_ref().is_some_and(|d| filmcraft_speech::models::installed(d, m)) {
+        eprintln!("SKIPPED: {model} is installed here");
+        return;
+    }
+    let r = s.execute("transcript.generate", json!({"items": [item.0], "model": model, "wait": false})).unwrap();
+    let id = r["job"].as_u64().expect("the call returns the job at once");
+    finish_job(&mut s, id);
+    let job = s.jobs.iter().find(|j| j.id == id).unwrap();
+    let err = job.progress.error.lock().unwrap().clone().unwrap_or_default();
+    assert!(err.contains("not downloaded"), "{err}");
+    assert!(s.project.transcripts.is_empty());
+}

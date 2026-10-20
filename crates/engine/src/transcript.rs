@@ -134,9 +134,28 @@ fn speech_err(e: SpeechError) -> EngineError {
 }
 
 /// The transcriber to use: the installed one, else the named catalogue model.
-fn transcriber(s: &Session, p: &Value) -> Result<Arc<dyn Transcriber>> {
+/// Where the recogniser comes from: a host's, installed in the session, or a catalogue model that
+/// is loaded where the work runs (the job's thread for a background transcription: loading
+/// Whisper takes a while and must not hold up the editor).
+enum TranscriberSource {
+    Installed(Arc<dyn Transcriber>),
+    Model { dir: std::path::PathBuf, id: String },
+}
+
+impl TranscriberSource {
+    fn load(self) -> std::result::Result<Arc<dyn Transcriber>, String> {
+        match self {
+            TranscriberSource::Installed(t) => Ok(t),
+            TranscriberSource::Model { dir, id } => filmcraft_speech::load(&dir, &id).map_err(|e| e.to_string()),
+        }
+    }
+}
+
+/// The recogniser to use: the installed one, else the named catalogue model, checked here (an
+/// unknown model or a build without speech-to-text fails at once) but not loaded yet.
+fn transcriber(s: &Session, p: &Value) -> Result<TranscriberSource> {
     if let Some(t) = &s.transcriber {
-        return Ok(t.clone());
+        return Ok(TranscriberSource::Installed(t.clone()));
     }
     // Settings ▸ Media Analysis & Transcription ▸ Speech model
     let model = str_p(p, "model").unwrap_or(&s.prefs.media_analysis.whisper_model);
@@ -147,7 +166,7 @@ fn transcriber(s: &Session, p: &Value) -> Result<Arc<dyn Transcriber>> {
         return Err(EngineError::Other(NO_SPEECH.into()));
     }
     let dir = models_dir().ok_or_else(|| EngineError::Other("no data directory for speech models".into()))?;
-    filmcraft_speech::load(&dir, model).map_err(speech_err)
+    Ok(TranscriberSource::Model { dir, id: model.to_string() })
 }
 
 fn generate(s: &mut Session, p: &Value) -> Result<Value> {
@@ -193,7 +212,9 @@ fn generate(s: &mut Session, p: &Value) -> Result<Value> {
     s.transcribe_jobs.push(PendingTranscribe { job: id, generation, results: results.clone() });
     crate::narration::spawn(s, job, wait, "filmcraft-transcribe", move || {
         let t0 = web_time::Instant::now();
-        let r = run_transcription(&work, t.as_ref(), &opts, &prog).map(|done| {
+        // the model loads here, in the job: a failure ends the job with its reason
+        *prog.status.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = "Loading the speech model".into();
+        let r = t.load().and_then(|t| run_transcription(&work, t.as_ref(), &opts, &prog)).map(|done| {
             let words: usize = done.iter().map(|(_, t)| t.words.len()).sum();
             *out.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(done);
             format!("Transcribed {words} word(s)")
