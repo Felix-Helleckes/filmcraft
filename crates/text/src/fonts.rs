@@ -6,8 +6,9 @@
 //! [`resolve`] maps a family + style name (as stored in projects) to a face and the synthetic
 //! bold/italic needed when the family lacks that style. Unknown families fall back to Inter.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Arc, OnceLock, RwLock};
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
 use skrifa::instance::{LocationRef, Size};
 use skrifa::{FontRef, MetadataProvider};
@@ -487,7 +488,53 @@ pub fn fallback_for(c: char, prefer: FaceId) -> FaceId {
             return f.id;
         }
     }
+    if is_emoji(c)
+        && let Some(id) = emoji_face(&faces, c)
+    {
+        return id;
+    }
     prefer
+}
+
+/// Whether `c` is a pictograph that an emoji font draws (#2528): the emoji blocks, the symbols and
+/// arrows emoji fonts carry, regional indicators (flags) and tag characters.
+pub fn is_emoji(c: char) -> bool {
+    matches!(u32::from(c), 0x1F000..=0x1FAFF | 0x2600..=0x27BF | 0x2300..=0x23FF | 0x2B00..=0x2BFF | 0x2190..=0x21FF | 0xE0020..=0xE007F)
+}
+
+/// A character that belongs to the emoji (or letter) before it rather than having a face of its
+/// own: variation selectors, the zero-width joiner of emoji sequences, skin tone modifiers, tag
+/// characters and the keycap mark. Laid out in the previous character's face, so a sequence stays
+/// one run for the font to combine, and an unknown one draws nothing instead of a box.
+pub fn joins_previous(c: char) -> bool {
+    matches!(u32::from(c), 0xFE00..=0xFE0F | 0x200D | 0x1F3FB..=0x1F3FF | 0xE0020..=0xE007F | 0x20E3)
+}
+
+/// A system emoji face (Segoe UI Emoji, Noto Emoji, …) covering `c`. These are found but not
+/// loaded until used, so they are probed without keeping the file (once per character while the
+/// list of faces stays the same: the answers are kept). Faces without outlines (Apple Color Emoji's bitmaps) are not listed at
+/// all (`sfnt::read_faces`), so what is found draws, in the text's colour.
+fn emoji_face(faces: &[Arc<Face>], c: char) -> Option<FaceId> {
+    // per character: the number of faces it was asked with, and the answer
+    static SEEN: OnceLock<Mutex<HashMap<char, (usize, Option<FaceId>)>>> = OnceLock::new();
+    let seen = SEEN.get_or_init(Default::default);
+    if let Some((_, found)) = seen.lock().unwrap_or_else(|e| e.into_inner()).get(&c).copied().filter(|(n, _)| *n == faces.len()) {
+        return found;
+    }
+    let found = pick_emoji_face(faces, c);
+    let mut seen = seen.lock().unwrap_or_else(|e| e.into_inner());
+    if seen.len() > 4096 {
+        seen.clear();
+    }
+    seen.insert(c, (faces.len(), found));
+    found
+}
+
+/// [`emoji_face`] without the memo: emoji families first, a loaded one before one on disk.
+fn pick_emoji_face(faces: &[Arc<Face>], c: char) -> Option<FaceId> {
+    let mut emoji: Vec<&Arc<Face>> = faces.iter().filter(|f| f.info.family.to_ascii_lowercase().contains("emoji")).collect();
+    emoji.sort_by_key(|f| f.bytes.get().is_none());
+    emoji.into_iter().find(|f| f.covers_text(c.encode_utf8(&mut [0; 4]))).map(|f| f.id)
 }
 
 #[cfg(test)]
@@ -601,6 +648,42 @@ mod tests {
         assert!(f.bytes.get().is_none(), "probing coverage must not cache the file");
         assert!(f.data().is_some());
         assert!(f.bytes.get().is_some());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// #2528: a character no loaded face has goes to a system emoji face, probed without loading
+    /// it; other families are not asked.
+    #[test]
+    fn emoji_fall_back_to_an_emoji_face() {
+        // a system font on disk, found but not loaded
+        let path = std::env::temp_dir().join(format!("filmcraft-emoji-{}.ttf", std::process::id()));
+        std::fs::write(&path, INTER_REGULAR).unwrap();
+        let face = |id: FaceId, family: &str| {
+            let info = FaceInfo {
+                family: family.into(),
+                style: "Regular".into(),
+                weight: 400,
+                italic: false,
+                index: 0,
+                data: FaceData::File(path.clone()),
+                origin: "system",
+            };
+            Arc::new(Face { id, info, bytes: OnceLock::new(), shaper: OnceLock::new() })
+        };
+        // Inter stands in for the emoji font: it has the arrow
+        let arrow = '\u{2192}';
+        assert!(is_emoji(arrow) && face(0, "Inter").has_char(arrow));
+        let faces = [face(0, "Inter Copy"), face(1, "Segoe UI Emoji")];
+        assert_eq!(pick_emoji_face(&faces, arrow), Some(1));
+        assert!(faces[1].bytes.get().is_none(), "probing doesn't keep the file");
+        // nothing covers it: no face
+        assert_eq!(pick_emoji_face(&faces, '\u{1FAE8}'), None);
+        assert_eq!(pick_emoji_face(&faces[..1], arrow), None);
+        // the sequence characters belong to the emoji before them
+        for c in ['\u{FE0F}', '\u{200D}', '\u{1F3FD}', '\u{20E3}'] {
+            assert!(joins_previous(c), "{c:?}");
+        }
+        assert!(!joins_previous('a') && !is_emoji('a') && is_emoji('\u{1F600}'));
         let _ = std::fs::remove_file(&path);
     }
 }

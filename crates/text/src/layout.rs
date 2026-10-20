@@ -398,7 +398,7 @@ fn paragraph(text: &str, base: usize, sty: &Styles, para: &ParagraphStyle) -> Ve
     let pinfo = &bidi.paragraphs[0];
     let base_rtl = pinfo.level.is_rtl();
     // per char: (byte, char, shaped char), face, level, small, style
-    let chars: Vec<(usize, char, char, FaceId, bool, bool, usize)> = text
+    let mut chars: Vec<(usize, char, char, FaceId, bool, bool, usize)> = text
         .char_indices()
         .map(|(b, c)| {
             let si = sty.at(base + b);
@@ -413,6 +413,20 @@ fn paragraph(text: &str, base: usize, sty: &Styles, para: &ParagraphStyle) -> Ve
             (b, c, sc, face, bidi.levels[b].is_rtl(), small, si)
         })
         .collect();
+    // An emoji sequence stays in one face, for the font to combine it (#2528): variation
+    // selectors, joiners and modifiers take the face of the character before them, and the emoji
+    // after a joiner prefers it too.
+    let mut prev: Option<(char, FaceId)> = None;
+    for ch in &mut chars {
+        if let Some((pc, pf)) = prev {
+            if fonts::joins_previous(ch.2) {
+                ch.3 = pf;
+            } else if pc == '\u{200D}' && fonts::is_emoji(ch.2) {
+                ch.3 = fonts::fallback_for(ch.2, pf);
+            }
+        }
+        prev = Some((ch.2, ch.3));
+    }
     // items: runs of equal (face, rtl, small, style)
     let mut items: Vec<Item> = Vec::new();
     let mut i = 0;
@@ -1135,6 +1149,16 @@ mod tests {
         let l = layout("A\u{3b1}", &TextStyle { family: "Noto Serif".into(), ..st(40.0) }, &ParagraphStyle::default());
         assert_eq!(l.glyphs.len(), 2);
         assert!(l.glyphs.iter().all(|g| g.id != 0));
+    }
+
+    /// #2528: a variation selector or joiner stays in the face of the character before it (one run
+    /// for the font to combine) and draws no box of its own.
+    #[test]
+    fn emoji_sequence_characters_keep_the_face_before_them() {
+        let l = layout("a\u{FE0F}\u{200D}b", &st(40.0), &ParagraphStyle::default());
+        let faces: Vec<FaceId> = l.glyphs.iter().map(|g| g.face).collect();
+        assert!(faces.windows(2).all(|w| w[0] == w[1]), "{faces:?}");
+        assert!(l.glyphs.iter().all(|g| g.id != 0), "no missing-glyph box: {:?}", l.glyphs.iter().map(|g| g.id).collect::<Vec<_>>());
     }
 
     #[test]
