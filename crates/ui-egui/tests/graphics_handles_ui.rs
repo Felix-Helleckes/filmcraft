@@ -427,8 +427,21 @@ fn editing_another_layer_keeps_the_syllable_being_composed() {
     let list = d.exec("graphics.list", json!({}));
     let texts: Vec<String> = list["layers"].as_array().unwrap().iter().map(|l| l["text"].as_str().unwrap_or("").to_string()).collect();
     assert_eq!(texts.len(), 2, "{texts:?}");
-    d.ok("ui.click", json!({"x": pic[0] + pic[2] * 0.3 + 2.0, "y": pic[1] + pic[3] * 0.2}));
-    d.frames(3);
+    // frame by frame, to see the input method told to end its composition (#2501 review): its
+    // commit of the syllable must not reach the new edit as well
+    let at = egui::pos2((pic[0] + pic[2] * 0.3 + 2.0) as f32, (pic[1] + pic[3] * 0.2) as f32);
+    let button = |pressed| egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed, modifiers: Default::default() };
+    d.harness.input_mut().events.extend([egui::Event::PointerMoved(at), button(true)]);
+    let mut interrupted = 0;
+    for i in 0..6 {
+        if i == 1 {
+            d.harness.input_mut().events.push(button(false));
+        }
+        d.frames(1);
+        interrupted += usize::from(d.harness.output().platform_output.ime.as_ref().is_some_and(|ime| ime.should_interrupt_composition));
+    }
+    assert!(d.harness.state().ui.gfx_edit.is_some(), "editing the other layer");
+    assert_eq!(interrupted, 1, "the new edit ends the composition once");
     let list = d.exec("graphics.list", json!({}));
     let texts: Vec<String> = list["layers"].as_array().unwrap().iter().map(|l| l["text"].as_str().unwrap_or("").to_string()).collect();
     assert!(texts.contains(&"B한".to_string()), "the syllable went into the layer it was typed in: {texts:?}");
