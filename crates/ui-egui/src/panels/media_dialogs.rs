@@ -66,7 +66,11 @@ pub fn route(app: &mut FilmcraftApp, id: &str, params: &Value) -> Option<Result<
                 app.ui.status = tl!("All media is online.").into();
                 return Some(r);
             }
-            app.ui.link_media = Some(LinkMediaDraft::default());
+            // it lists every missing clip, starting on the selected one (the clicked one, from the
+            // Project panel's item menu, #2352)
+            let first = app.session.state.project_selection.first().map(|i| i.0);
+            let row = r.as_ref().ok().and_then(|v| v["missing"].as_array()?.iter().position(|m| m["item"].as_u64() == first)).unwrap_or(0);
+            app.ui.link_media = Some(LinkMediaDraft { row, ..LinkMediaDraft::default() });
             Some(r)
         }
         "media.makeOffline" => Some(enabled(app, id).map(|_| {

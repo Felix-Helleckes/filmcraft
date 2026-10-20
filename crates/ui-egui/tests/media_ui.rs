@@ -401,6 +401,14 @@ fn link_media_dialog_relinks_moved_media() {
     assert_eq!(rows.len(), 2, "{rows:?}");
     assert!(!d.ids("linkMedia.locate").is_empty() && !d.ids("linkMedia.offlineAll").is_empty());
     d.snapshot("media-link-dialog");
+    // opened with a clip selected (as from its item menu): the dialog starts on that clip (#2392 review)
+    let missing: Vec<u64> = d.exec("media.linkMedia", json!({}))["missing"].as_array().unwrap().iter().map(|m| m["item"].as_u64().unwrap()).collect();
+    d.app().ui.link_media = None;
+    d.exec("project.select", json!({"items": [missing[1]]}));
+    d.ok("ui.menu.invoke", json!({"id": "media.linkMedia"}));
+    assert_eq!(d.app().ui.link_media.as_ref().map(|l| l.row), Some(1));
+    d.app().ui.link_media.as_mut().unwrap().row = 0;
+    d.frames(2);
     // search the moved folder for the selected clip
     let folder = root.join("Moved").to_string_lossy().into_owned();
     d.app().ui.link_media.as_mut().unwrap().folder = folder;
