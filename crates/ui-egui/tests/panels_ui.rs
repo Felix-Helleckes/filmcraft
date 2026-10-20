@@ -770,6 +770,22 @@ fn edit_copy_paste_duplicate_act_on_graphic_layers_in_the_graphic_editor() {
     d.ok("ui.menu.invoke", json!({"id": "edit.duplicate"}));
     assert_eq!(count(&mut d), 4);
     assert_eq!(d.app().session.state.graphic_layers, vec![3]);
+    // Edit ▸ Paste is enabled for copied layers, whatever the clip clipboard holds (#2460 review)
+    d.app().session.state.clipboard.clear();
+    let paste = |d: &mut Driver| filmcraft_ui_egui::menus::menu_items(d.app()).into_iter().find(|m| m.id == "edit.paste").unwrap().enabled;
+    assert!(paste(&mut d), "Paste is enabled for the copied layer");
+    d.ok("ui.set", json!({"focused": "Timeline"}));
+    d.frames(2);
+    assert!(!paste(&mut d), "the Timeline has no clips to paste");
+    // Cmd+D duplicates the layer in the graphic editor, not a transition (#2460 review)
+    for panel in ["Properties", "Essential Graphics"] {
+        d.ok("ui.set", json!({"focused": panel}));
+        d.frames(2);
+        let n = count(&mut d);
+        d.ok("ui.key", json!({"key": "Cmd+D"}));
+        d.frames(2);
+        assert_eq!(count(&mut d), n + 1, "Cmd+D in {panel}");
+    }
 }
 
 /// #2329: in the Effects panel what a folder holds is indented under it: an effect's label starts

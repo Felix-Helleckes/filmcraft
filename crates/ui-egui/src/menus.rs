@@ -537,9 +537,10 @@ pub fn invoke(app: &mut FilmcraftApp, ctx: &egui::Context, id: &str, mut params:
             app.dialog = Some(crate::Dialog::RevertConfirm);
             return Ok(json!({"dialog": "revert"}));
         }
-        // In the graphic editor (Properties / Essential Graphics) with a layer selected, Copy,
-        // Paste and Duplicate act on graphic layers, as in Premiere's graphics tools (#2264,
-        // #2265). Without a selected layer (or nothing copied, for Paste) they do what they always did.
+        // In the graphic editor (Properties / Essential Graphics) with a graphic clip selected,
+        // Copy and Duplicate act on its selected layers, and Paste puts copied layers into it, as in
+        // Premiere's graphics tools (#2264, #2265). Without a selected layer (Copy, Duplicate) or
+        // copied layers (Paste) they do what they always did.
         "edit.copy" | "edit.paste" | "edit.duplicate" if params.as_object().is_none_or(|m| m.is_empty()) && graphic_layer_edit(app, id) => {
             let cmd = match id {
                 "edit.copy" => "graphics.copyLayer",
@@ -726,6 +727,10 @@ pub fn menu_items(app: &FilmcraftApp) -> Vec<MenuItem> {
             "app.language.italian" => it.checked = Some(app.ui.language == crate::i18n::Language::It),
             "app.language.korean" => it.checked = Some(app.ui.language == crate::i18n::Language::Ko),
             _ => {}
+        }
+        // Paste in the graphic editor pastes copied layers (`invoke`), whatever the clip clipboard holds
+        if it.id == "edit.paste" && graphic_layer_edit(app, "edit.paste") {
+            it.enabled = true;
         }
         if it.id.starts_with("view.") {
             it.checked = crate::panels::monitor_view::checked(app, &it.id).or(crate::panels::menu_dialogs::checked(app, &it.id));
