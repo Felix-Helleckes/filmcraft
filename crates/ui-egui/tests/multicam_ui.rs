@@ -12,7 +12,6 @@ use std::sync::mpsc::{Sender, channel};
 use egui_kittest::Harness;
 use filmcraft_engine::Session;
 use filmcraft_engine::project::{ItemId, ItemKind, Label, MediaClip, MediaRef, Project, SequenceSettings, TrackKind};
-use filmcraft_engine::project::{ItemKind, Label, MediaClip, MediaRef, Project, SequenceSettings, TrackKind};
 use filmcraft_media::generators::GeneratorSource;
 use filmcraft_media::{DemoScene, Generator, MediaSource};
 use filmcraft_time::{FrameRate, Tick, TimeRange};
