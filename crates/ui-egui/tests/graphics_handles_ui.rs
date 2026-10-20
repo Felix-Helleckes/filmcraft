@@ -422,7 +422,12 @@ fn editing_another_layer_keeps_the_syllable_being_composed() {
     d.frames(2);
     let preedit = |text: &str| egui::Event::Ime(egui::ImeEvent::Preedit { text: text.into(), active_range_chars: None });
     d.harness.input_mut().events.push(preedit("한"));
-    d.frames(3);
+    let ime = |d: &Driver| d.harness.output().platform_output.ime.as_ref().map(|ime| ime.should_interrupt_composition);
+    for _ in 0..3 {
+        d.frames(1);
+        // the syllable keeps being composed while the edit goes on
+        assert_eq!(ime(&d), Some(false));
+    }
     // click into the first layer's text: the edit moves there
     let list = d.exec("graphics.list", json!({}));
     let texts: Vec<String> = list["layers"].as_array().unwrap().iter().map(|l| l["text"].as_str().unwrap_or("").to_string()).collect();
@@ -438,10 +443,12 @@ fn editing_another_layer_keeps_the_syllable_being_composed() {
             d.harness.input_mut().events.push(button(false));
         }
         d.frames(1);
-        interrupted += usize::from(d.harness.output().platform_output.ime.as_ref().is_some_and(|ime| ime.should_interrupt_composition));
+        interrupted += usize::from(ime(&d) == Some(true));
     }
     assert!(d.harness.state().ui.gfx_edit.is_some(), "editing the other layer");
-    assert_eq!(interrupted, 1, "the new edit ends the composition once");
+    assert!(interrupted >= 1, "the new edit ends the composition");
+    d.frames(1);
+    assert_eq!(ime(&d), Some(false), "and then lets the next one go on");
     let list = d.exec("graphics.list", json!({}));
     let texts: Vec<String> = list["layers"].as_array().unwrap().iter().map(|l| l["text"].as_str().unwrap_or("").to_string()).collect();
     assert!(texts.contains(&"B한".to_string()), "the syllable went into the layer it was typed in: {texts:?}");

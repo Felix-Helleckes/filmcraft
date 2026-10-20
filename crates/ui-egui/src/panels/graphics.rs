@@ -510,9 +510,6 @@ fn end_edit(app: &mut FilmcraftApp, ui: &egui::Ui) {
     // (Korean commits a syllable only when the next one starts, so the last one would be lost)
     if let Some(ed) = app.ui.gfx_edit.take().filter(|ed| !ed.preedit.is_empty()) {
         commit_preedit(app, &ed);
-        // The input method still holds that text: an editor started in the same frame (a click on
-        // another layer) would get its commit too, so it starts by ending the composition.
-        ui.data_mut(|d| d.insert_temp(egui::Id::new(TEXT_EDIT_ID).with("interrupt"), true));
     }
     app.ui.gfx_edit = None;
     ui.memory_mut(|m| m.surrender_focus(egui::Id::new(TEXT_EDIT_ID)));
@@ -964,14 +961,13 @@ pub fn monitor_overlay(app: &mut FilmcraftApp, ui: &mut egui::Ui, pic: Rect, fra
             er = er.union(r);
         }
         app.auto.add("program.textEdit", er, &tp.text);
-        // set when the previous edit kept a composing text (`end_edit`)
-        let interrupt = ui.data_mut(|d| d.remove_temp::<bool>(egui::Id::new(TEXT_EDIT_ID).with("interrupt"))).unwrap_or(false);
         ui.ctx().output_mut(|o| {
             o.ime = Some(egui::output::IMEOutput {
                 purpose: Default::default(),
                 rect: er,
                 cursor_rect: Rect::from_two_pos(a, b),
-                should_interrupt_composition: interrupt,
+                // egui sets it when the editor takes the focus (`request_focus` below)
+                should_interrupt_composition: false,
             })
         });
     }
@@ -1073,7 +1069,12 @@ fn text_edit(app: &mut FilmcraftApp, ui: &mut egui::Ui, v: &LayerView, mut ed: G
         return;
     }
     ui.memory_mut(|m| {
-        m.request_focus(eid);
+        // only when it doesn't have it: egui ends the input method's composition on every
+        // request, which every frame would lose each syllable being composed; a new edit (another
+        // layer clicked) takes it once, so a syllable committed to the last one stays there
+        if !m.has_focus(eid) {
+            m.request_focus(eid);
+        }
         m.set_focus_lock_filter(eid, egui::EventFilter { tab: true, horizontal_arrows: true, vertical_arrows: true, escape: true });
     });
     let Some(tp) = text_of(&v.spec) else { return };
