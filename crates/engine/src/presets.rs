@@ -215,13 +215,13 @@ pub fn command_key(name: &str) -> String {
 /// A preset name must give a command id of its own (#1356): one with no letter or digit (`???`)
 /// could never be listed or bound in Keyboard Shortcuts, and one whose id another preset has
 /// (`Fade-In` next to `Fade In`) would share its command, and a key bound to it would apply the
-/// other one. `except` is a preset that may keep the id (the one being renamed).
-fn check_command_name(cmd: &str, name: &str, presets: &[EffectPreset], except: Option<&str>) -> Result<()> {
+/// other one. `presets` are the presets as they are (or will be) next to it.
+fn check_command_name(cmd: &str, name: &str, presets: &[EffectPreset]) -> Result<()> {
     let key = command_key(name);
     if key.is_empty() {
         return Err(bad(cmd, "a preset name needs a letter or a digit"));
     }
-    if let Some(other) = presets.iter().find(|p| p.name != name && Some(p.name.as_str()) != except && command_key(&p.name) == key) {
+    if let Some(other) = presets.iter().find(|p| p.name != name && command_key(&p.name) == key) {
         return Err(bad(
             cmd,
             format!(
@@ -514,7 +514,7 @@ fn clip_size(s: &Session, it: &TrackItem) -> (u32, u32) {
 
 fn save(s: &mut Session, p: &Value) -> Result<Value> {
     let name = str_p(p, "name").map(str::trim).filter(|n| !n.is_empty()).ok_or_else(|| bad("presets.save", "need a `name`"))?.to_string();
-    check_command_name("presets.save", &name, &s.presets.all(), None)?;
+    check_command_name("presets.save", &name, &s.presets.all())?;
     let seq = s.active_sequence().ok_or(EngineError::NoSequence)?;
     let clip = clip_p(p, "clip")
         .or_else(|| s.state.selection.iter().copied().find(|c| seq.find_item(*c).and_then(|(t, _)| seq.track(t)).is_some_and(|t| t.kind == TrackKind::Video)))
@@ -603,7 +603,12 @@ fn delete(s: &mut Session, p: &Value) -> Result<Value> {
 fn rename(s: &mut Session, p: &Value) -> Result<Value> {
     let name = str_p(p, "name").ok_or_else(|| bad("presets.rename", "need `name`"))?;
     let to = str_p(p, "to").map(str::trim).filter(|t| !t.is_empty()).ok_or_else(|| bad("presets.rename", "need `to`"))?.to_string();
-    check_command_name("presets.rename", &to, &s.presets.all(), Some(name))?;
+    // against the presets as they are after the rename: a built-in the renamed preset hid by
+    // having its name comes back, with its id (#2377 review)
+    let user_after: Vec<&str> = s.presets.user.iter().map(|x| if x.name == name { to.as_str() } else { x.name.as_str() }).collect();
+    let mut after: Vec<EffectPreset> = builtin_presets().into_iter().filter(|b| !user_after.contains(&b.name.as_str())).collect();
+    after.extend(s.presets.user.iter().filter(|x| x.name != name).cloned());
+    check_command_name("presets.rename", &to, &after)?;
     if s.presets.user.iter().any(|x| x.name == to) {
         return Err(bad("presets.rename", format!("a preset named `{to}` exists")));
     }
@@ -643,11 +648,15 @@ fn import(s: &mut Session, p: &Value) -> Result<Value> {
     // there or earlier in the file) is left out and reported, not the whole file
     let mut names = Vec::new();
     let mut skipped = Vec::new();
+    // ids taken by earlier presets of this file: a later one with the same id is skipped too
+    let mut taken: Vec<String> = Vec::new();
     for pr in presets {
-        if check_command_name("presets.import", &pr.name, &s.presets.all(), None).is_err() {
+        let key = command_key(&pr.name);
+        if taken.contains(&key) || check_command_name("presets.import", &pr.name, &s.presets.all()).is_err() {
             skipped.push(pr.name);
             continue;
         }
+        taken.push(key);
         names.push(pr.name.clone());
         s.presets.user.retain(|x| x.name != pr.name);
         s.presets.user.push(pr);

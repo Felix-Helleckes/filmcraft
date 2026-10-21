@@ -258,6 +258,34 @@ fn export_and_import_go_through_host_services() {
     assert!(s2.execute("presets.import", json!({"path": "/exports/missing.prfpset"})).is_err());
 }
 
+/// #2377 review: a rename that brings back a built-in the preset hid by having its name, and two
+/// presets of one file with the same id, would leave a command applying the wrong preset.
+#[test]
+fn renames_and_imports_keep_one_preset_per_id() {
+    let fs = Arc::new(MemFs::default());
+    let mut s = Session::new(fs.clone());
+    let fade = crate::presets::builtin_presets().into_iter().map(|p| p.name).find(|n| n.contains(' ')).unwrap();
+    let variant = fade.to_uppercase().replace(' ', "-");
+    // a user preset with exactly the built-in's name takes its place; renamed to another spelling
+    // of it, the built-in would come back with the same id
+    let path = "/exports/one.prfpset";
+    s.execute("presets.export", json!({"path": path, "names": [fade]})).unwrap();
+    s.execute("presets.import", json!({"path": path})).unwrap();
+    assert!(s.presets.user.iter().any(|p| p.name == fade));
+    let e = s.execute("presets.rename", json!({"name": fade, "to": variant})).unwrap_err().to_string();
+    assert!(e.contains("shortcut id"), "{e}");
+    s.execute("presets.rename", json!({"name": fade, "to": "Mine"})).unwrap();
+    // one file, two presets with one id: the first is imported, the second skipped
+    let mut file: serde_json::Value = serde_json::from_slice(&fs.read_file(path).unwrap()).unwrap();
+    let mut second = file["presets"][0].clone();
+    file["presets"][0]["name"] = json!("Glow");
+    second["name"] = json!("glow!");
+    file["presets"].as_array_mut().unwrap().push(second);
+    fs.write_file("/exports/two.prfpset", &serde_json::to_vec(&file).unwrap()).unwrap();
+    let r = s.execute("presets.import", json!({"path": "/exports/two.prfpset"})).unwrap();
+    assert_eq!((r["imported"].clone(), r["skipped"].clone()), (json!(["Glow"]), json!(["glow!"])));
+}
+
 /// Every effect preset is a bindable command, `presets.apply.<name>` (#1356): listed in Keyboard
 /// Shortcuts under Presets, assignable a key, applying the preset to the selected clips in
 /// one undo step; a deleted preset takes its command with it.
