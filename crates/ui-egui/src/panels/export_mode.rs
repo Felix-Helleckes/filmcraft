@@ -147,6 +147,18 @@ pub fn export_params(app: &FilmcraftApp) -> Value {
     p
 }
 
+/// The export job writing the file these settings export to, while it runs (#2670): the settings
+/// then can't change under it, and Export cancels it instead of starting the file over.
+pub fn running_export(app: &FilmcraftApp) -> Option<u64> {
+    let path = output_path(&app.ui.export);
+    let s = &app.session;
+    s.export_targets
+        .iter()
+        .filter(|(_, p)| **p == path)
+        .map(|(job, _)| *job)
+        .find(|job| s.jobs.iter().any(|j| j.id == *job && !j.progress.finished.load(std::sync::atomic::Ordering::Relaxed)))
+}
+
 fn sync_sequence(app: &mut FilmcraftApp) {
     let Some(seq) = app.session.state.active_sequence else { return };
     if app.ui.export.for_sequence != Some(seq.0) || app.ui.export.file_name.is_empty() {
@@ -463,6 +475,10 @@ fn settings_column(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     let mut pick_folder = false;
     let mut pick_overlay = false;
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink2(vec2(14.0, 10.0))).id_salt("export-settings"));
+    // nothing changes while this file is being exported
+    if running_export(app).is_some() {
+        child.disable();
+    }
     let ex = &mut app.ui.export;
     egui::ScrollArea::vertical().id_salt("export-settings-scroll").auto_shrink([false, false]).show(&mut child, |ui| {
         ui.label(egui::RichText::new(tl!("Media File")).strong().size(14.0));
@@ -1139,23 +1155,40 @@ fn preview_column(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, seq_id:
     // buttons
     let go = Rect::from_min_size(pos2(rect.max.x - 120.0, rect.max.y - 44.0), vec2(104.0, 30.0));
     let queue = Rect::from_min_size(pos2(go.min.x - 132.0, go.min.y), vec2(122.0, 30.0));
-    let qresp = ui.interact(queue, egui::Id::new("export-queue-send"), Sense::click());
-    ui.painter().rect_stroke(queue, 15.0, egui::Stroke::new(1.0, if qresp.hovered() { t.text } else { t.text_dim }), egui::StrokeKind::Inside);
-    ui.painter().text(queue.center(), Align2::CENTER_CENTER, tl!("Send to Queue"), Tokens::semibold(12.5), t.text);
+    // while this file is being exported: Send to Queue is off, and Export cancels it (#2670)
+    let running = running_export(app);
+    let qsense = if running.is_some() { Sense::hover() } else { Sense::click() };
+    let qresp = ui.interact(queue, egui::Id::new("export-queue-send"), qsense);
+    let qcolor = if running.is_some() { t.text_faint } else { t.text };
+    ui.painter().rect_stroke(
+        queue,
+        15.0,
+        egui::Stroke::new(1.0, if qresp.hovered() && running.is_none() { t.text } else { t.text_dim }),
+        egui::StrokeKind::Inside,
+    );
+    ui.painter().text(queue.center(), Align2::CENTER_CENTER, tl!("Send to Queue"), Tokens::semibold(12.5), qcolor);
     reg.add("export.sendToQueue", queue, "Send to Queue");
     let resp = ui.interact(go, egui::Id::new("export-go"), Sense::click());
+    let go_label = if running.is_some() { tl!("Cancel") } else { tl!("Export") };
     ui.painter().rect_filled(go, 15.0, if resp.hovered() { t.accent_hover } else { t.accent });
-    ui.painter().text(go.center(), Align2::CENTER_CENTER, tl!("Export"), Tokens::semibold(13.0), Color32::WHITE);
-    reg.add("export.button", go, "Export");
+    ui.painter().text(go.center(), Align2::CENTER_CENTER, go_label, Tokens::semibold(13.0), Color32::WHITE);
+    reg.add("export.button", go, if running.is_some() { "Cancel" } else { "Export" });
     reg.flush(app);
-    if resp.clicked() {
+    if resp.clicked()
+        && let Some(job) = running
+    {
+        match app.session.execute("jobs.cancel", json!({"job": job})) {
+            Ok(_) => app.ui.status = tl!("Export cancelled").into(),
+            Err(e) => app.ui.status = e.to_string(),
+        }
+    } else if resp.clicked() {
         let r = app.session.execute("file.exportMedia", export_params(app));
         match r {
             Ok(v) => app.ui.status = tlf!("Exporting {path}", path = v["path"].as_str().unwrap_or("")),
             Err(e) => app.ui.status = e.to_string(),
         }
     }
-    if qresp.clicked() {
+    if qresp.clicked() && running.is_none() {
         let mut p = export_params(app);
         if app.ui.export.preset != CUSTOM {
             // the queue shows which preset an item came from

@@ -475,8 +475,18 @@ pub fn spawn_export(s: &mut Session, project: Arc<Project>, seq: ItemId, mut set
     if let Some(dir) = Path::new(&settings.path).parent().filter(|d| !d.as_os_str().is_empty() && !s.services.export_in_memory()) {
         let _ = std::fs::create_dir_all(dir);
     }
+    // one export at a time per file: a second one would write it again from the start (#2670)
+    let busy = s
+        .export_targets
+        .iter()
+        .any(|(job, path)| *path == settings.path && s.jobs.iter().any(|j| j.id == *job && !j.progress.finished.load(std::sync::atomic::Ordering::Relaxed)));
+    if busy {
+        return Err(EngineError::Other(format!("{} is being exported already; wait for it to finish or cancel it", file_name(&settings.path))));
+    }
     write_sidecar(s, &project, seq, &settings)?;
     let id = s.jobs.iter().map(|j| j.id).max().unwrap_or(0) + 1;
+    s.export_targets.retain(|job, _| s.jobs.iter().any(|j| j.id == *job));
+    s.export_targets.insert(id, settings.path.clone());
     let job = crate::Job { id, label, progress: Default::default(), result: Default::default() };
     // Export always renders full-resolution media, whatever the proxy toggle says.
     let provider = s.media.full_res_provider(project.clone(), s.services.clone()).recording();
