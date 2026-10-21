@@ -320,6 +320,14 @@ fn item_menu(app: &mut FilmcraftApp, ui: &mut egui::Ui, id: ItemId, kind: &ItemK
                     ui.close();
                 }
             }
+            // the attached proxy's file, as Reveal in Finder shows the media's (#2689)
+            let has_proxy = matches!(kind, ItemKind::Media(m) if matches!(m.proxy, Some(filmcraft_project::MediaRef::File { .. })));
+            let b = ui.add_enabled(has_proxy, egui::Button::new(tl!("Reveal Proxy in Finder")));
+            app.auto.add("project.itemMenu.proxy.reveal", b.rect, "Reveal Proxy in Finder");
+            if b.clicked() {
+                actions.push(("file.revealProxy".into(), json!({"items": [id.0]})));
+                ui.close();
+            }
         });
     }
     ui.separator();
