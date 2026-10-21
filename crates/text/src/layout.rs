@@ -415,30 +415,35 @@ fn paragraph(text: &str, base: usize, sty: &Styles, para: &ParagraphStyle) -> Ve
         .collect();
     // An emoji sequence is laid out in one face, for the font to combine it (#2528): variation
     // selectors, joiners and modifiers belong to the character before them, and emoji joined by a
-    // ZWJ to the one before; the whole sequence takes a face covering all of its emoji.
+    // ZWJ to the one before. The sequence takes a face covering all of its visible characters;
+    // when none does, each visible one keeps its own face and the marks go with the one before.
     let mut i = 0;
     while i < chars.len() {
         let mut j = i + 1;
-        let mut zwj = false;
         while let Some(c) = chars.get(j).map(|c| c.2) {
             let after_zwj = j.checked_sub(1).and_then(|p| chars.get(p)).is_some_and(|p| p.2 == '\u{200D}');
             if !(fonts::joins_previous(c) || (after_zwj && fonts::is_emoji(c))) {
                 break;
             }
-            zwj |= c == '\u{200D}';
             j += 1;
         }
-        if let Some(seq) = chars.get_mut(i..j)
+        if j > i + 1
+            && let Some(seq) = chars.get_mut(i..j)
             && let Some(first) = seq.first().map(|c| c.3)
         {
-            let face = if zwj {
-                let emoji: String = seq.iter().map(|c| c.2).filter(|c| !fonts::joins_previous(*c)).collect();
-                fonts::fallback_for_text(&emoji, first)
-            } else {
-                first
-            };
-            for ch in seq {
-                ch.3 = face;
+            let visible: String = seq.iter().map(|c| c.2).filter(|c| !fonts::is_invisible_in_sequence(*c)).collect();
+            match fonts::fallback_for_text(&visible, first) {
+                Some(face) => seq.iter_mut().for_each(|ch| ch.3 = face),
+                None => {
+                    let mut last = first;
+                    for ch in seq {
+                        if fonts::joins_previous(ch.2) {
+                            ch.3 = last;
+                        } else {
+                            last = ch.3;
+                        }
+                    }
+                }
             }
         }
         i = j;
@@ -1179,6 +1184,25 @@ mod tests {
         let l = layout("x\u{2192}\u{200D}\u{2194}\u{FE0F}y", &st(40.0), &ParagraphStyle::default());
         let seq: Vec<FaceId> = l.glyphs.iter().filter(|g| (1..14).contains(&g.cluster)).map(|g| g.face).collect();
         assert!(!seq.is_empty() && seq.windows(2).all(|w| w[0] == w[1]), "{seq:?}");
+        // a bundled face that has the first pictograph but not the second, and Inter has both: the
+        // whole sequence goes to Inter instead of splitting it (#2561 review)
+        let inter = fonts::resolve("Inter", "Regular").face;
+        let has = |f: FaceId, c: char| fonts::face(f).has_char(c);
+        let pictographs = || (0x2190..=0x23FF).chain(0x2600..=0x27BF).chain(0x2B00..=0x2BFF).filter_map(char::from_u32).filter(|c| fonts::is_emoji(*c));
+        let (family, x, y) = ["JetBrains Mono", "Noto Serif"]
+            .into_iter()
+            .find_map(|family| {
+                let pf = fonts::resolve(family, "Regular").face;
+                let x = pictographs().find(|c| has(pf, *c) && has(inter, *c))?;
+                let y = pictographs().find(|c| !has(pf, *c) && has(inter, *c))?;
+                Some((family, x, y))
+            })
+            .expect("a bundled face with one pictograph of Inter's and not another");
+        let text = format!("{x}\u{200D}{y}");
+        let l = layout(&text, &TextStyle { family: family.into(), ..st(40.0) }, &ParagraphStyle::default());
+        let faces: Vec<FaceId> = l.glyphs.iter().map(|g| g.face).collect();
+        assert!(!faces.is_empty() && faces.iter().all(|f| has(*f, x) && has(*f, y)), "one face with both: {faces:?}");
+        assert!(faces.windows(2).all(|w| w[0] == w[1]), "{faces:?}");
     }
 
     #[test]

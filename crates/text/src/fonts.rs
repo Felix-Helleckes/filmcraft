@@ -504,16 +504,16 @@ pub fn fallback_for(c: char, prefer: FaceId) -> FaceId {
     prefer
 }
 
-/// A face that covers every character of `text` (an emoji ZWJ sequence without its joiners), so
-/// the sequence is shaped as one: `prefer` when it does, else a loaded face, else a system emoji
-/// face; `prefer` when none does.
-pub fn fallback_for_text(text: &str, prefer: FaceId) -> FaceId {
+/// A face that covers every character of `text` (an emoji sequence without its invisible
+/// selectors and joiners), so the sequence is shaped as one: `prefer` when it does, else a loaded
+/// face, else a system emoji face; None when no face covers all of it.
+pub fn fallback_for_text(text: &str, prefer: FaceId) -> Option<FaceId> {
     if face(prefer).covers_text(text) {
-        return prefer;
+        return Some(prefer);
     }
     let faces = all_faces();
     if let Some(f) = faces.iter().find(|f| f.bytes.get().is_some() && f.covers_text(text)) {
-        return f.id;
+        return Some(f.id);
     }
     let faces = if system_scanned() {
         faces
@@ -521,7 +521,13 @@ pub fn fallback_for_text(text: &str, prefer: FaceId) -> FaceId {
         scan_system();
         all_faces()
     };
-    emoji_face(&faces, text).unwrap_or(prefer)
+    emoji_face(&faces, text)
+}
+
+/// The invisible characters of an emoji sequence (variation selectors, the joiner, tags): they
+/// need no glyph of their own, so a face is not asked to cover them.
+pub fn is_invisible_in_sequence(c: char) -> bool {
+    matches!(u32::from(c), 0xFE00..=0xFE0F | 0x200D | 0xE0020..=0xE007F)
 }
 
 /// Whether `c` is a pictograph that an emoji font draws (#2528): the emoji blocks, the symbols and
@@ -718,10 +724,10 @@ mod tests {
         assert!(system_scanned(), "the system fonts were scanned for an emoji font");
         // a whole sequence: the preferred face when it covers it all, else one that does
         let inter = resolve(DEFAULT_FAMILY, "Regular").face;
-        assert_eq!(fallback_for_text("ab", inter), inter);
+        assert_eq!(fallback_for_text("ab", inter), Some(inter));
         let mono = resolve("JetBrains Mono", "Regular").face;
-        let both = fallback_for_text("a\u{2192}", mono);
+        let both = fallback_for_text("a\u{2192}", mono).expect("a face with both");
         assert!(super::face(both).covers_text("a\u{2192}"), "{both}: one face for the whole sequence");
-        assert_eq!(fallback_for_text("\u{10FFFD}", inter), inter, "nothing covers it: the preferred face");
+        assert_eq!(fallback_for_text("\u{10FFFD}", inter), None, "nothing covers it");
     }
 }
