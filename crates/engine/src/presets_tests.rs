@@ -308,4 +308,26 @@ fn every_preset_is_a_shortcut_command() {
     s.execute("presets.save", json!({"clip": clips[0].0, "name": "Glow 2", "effects": [bi]})).unwrap();
     assert!(s.execute("presets.rename", json!({"name": "Glow 2", "to": "--"})).is_err());
     assert!(s.presets.user.iter().any(|x| x.name == "Glow 2"), "the rename changed nothing");
+    // nor a name whose id another preset has: a key bound to it would apply the other (#2377 review)
+    let fade = crate::presets::builtin_presets().into_iter().map(|p| p.name).find(|n| n.contains(' ')).unwrap();
+    let variant = fade.to_uppercase().replace(' ', "-");
+    assert_ne!(variant, fade);
+    let user = s.presets.user.len();
+    let e = s.execute("presets.save", json!({"clip": clips[0].0, "name": variant, "effects": [bi]})).unwrap_err().to_string();
+    assert!(e.contains("shortcut id"), "{e}");
+    assert_eq!(s.presets.user.len(), user);
+    assert!(s.execute("presets.rename", json!({"name": "Glow 2", "to": variant})).unwrap_err().to_string().contains("shortcut id"));
+    // renaming a preset to another spelling of its own name is fine
+    s.execute("presets.rename", json!({"name": "Glow 2", "to": "glow-2"})).unwrap();
+    assert!(s.presets.user.iter().any(|x| x.name == "glow-2"));
+}
+
+#[test]
+fn built_in_presets_have_ids_of_their_own() {
+    let mut keys: Vec<String> = crate::presets::builtin_presets().iter().map(|p| crate::presets::command_key(&p.name)).collect();
+    assert!(keys.iter().all(|k| !k.is_empty()));
+    let n = keys.len();
+    keys.sort();
+    keys.dedup();
+    assert_eq!(keys.len(), n, "two built-in presets share a command id");
 }
