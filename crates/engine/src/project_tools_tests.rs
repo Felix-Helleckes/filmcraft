@@ -635,5 +635,11 @@ fn reveal_resolves_paths_stored_relative_to_the_project() {
     assert_eq!(real(std::path::Path::new(&revealed)), real(&media));
     let revealed = s.execute("file.revealProxy", json!({})).unwrap()["paths"][0].as_str().unwrap().to_string();
     assert_eq!(real(std::path::Path::new(&revealed)), real(&proxy));
+    // a subclip reveals its media's proxy (#2711 review)
+    s.execute("source.open", json!({"item": item.0})).unwrap();
+    s.execute("project.setMarks", json!({"item": item.0, "in": 0, "out": filmcraft_time::Tick::from_seconds_f64(0.2).0})).unwrap();
+    let sub = s.execute("clip.makeSubclip", json!({})).unwrap()["item"].as_u64().unwrap();
+    let revealed = s.execute("file.revealProxy", json!({"items": [sub]})).unwrap()["paths"][0].as_str().unwrap().to_string();
+    assert_eq!(real(std::path::Path::new(&revealed)), real(&proxy));
     let _ = std::fs::remove_dir_all(&dir);
 }
