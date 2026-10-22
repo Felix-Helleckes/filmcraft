@@ -3592,3 +3592,4 @@
 	Open a sequence to search its graphics	打开序列以搜索其中的图形
 	No text graphics in this sequence. Add text with the Type tool.	此序列中没有文本图形。请用文字工具添加文本。
 	No matching text.	没有匹配的文本。
+	Hardware decoding isn't used for {reason}. FilmCraft decodes it on the CPU, so 4K or high-bitrate video can play back slowly.	{reason} 未使用硬件解码。FilmCraft 在 CPU 上解码，因此 4K 或高码率视频播放可能会变慢。
