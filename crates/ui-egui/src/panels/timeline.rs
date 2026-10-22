@@ -1139,7 +1139,8 @@ const PEAK_SAMPLES: usize = 256;
 /// Waveform peaks of the whole of `dur`, one per [`PEAK_SAMPLES`]: always as many as the duration
 /// holds, since the timeline places peak `i` by its index. A chunk the source returns short (a
 /// resampled 44.1 kHz WAV can come back a few samples under) is padded, and one it can't read is
-/// silence, so the rest of the waveform neither shifts earlier nor goes missing (#2674).
+/// silence, so the rest of the waveform neither shifts earlier nor goes missing (#2674). A stream
+/// that doesn't exist has no peaks.
 fn source_peaks(src: &dyn filmcraft_media::MediaSource, stream: usize, dur: Tick) -> Vec<(f32, f32)> {
     let sr = 48_000u32;
     let total = usize::try_from(dur.to_units_floor(sr as i64).max(0)).unwrap_or(0);
@@ -1160,6 +1161,8 @@ fn source_peaks(src: &dyn filmcraft_media::MediaSource, stream: usize, dur: Tick
                     out.push(c.iter().fold((0f32, 0f32), |(l, h), v| (l.min(*v), h.max(*v))));
                 }
             }
+            // no such stream: no waveform at all, rather than a silent one
+            Err(filmcraft_media::MediaError::NoStream(_)) => return Vec::new(),
             Err(_) => failures += 1,
         }
         out.resize(before + expected, (0.0, 0.0));
@@ -3499,7 +3502,7 @@ mod peaks_tests {
         }
         fn audio(&self, start: i64, frames: usize, sample_rate: u32) -> Result<filmcraft_frame::AudioBuffer> {
             if self.failing.contains(&start) {
-                return Err(filmcraft_media::MediaError::NoStream("audio"));
+                return Err(filmcraft_media::MediaError::Io("simulated audio read failure".into()));
             }
             let mut buf = self.inner.audio(start, frames, sample_rate)?;
             for c in &mut buf.channels {
@@ -3530,7 +3533,23 @@ mod peaks_tests {
         let full = source_peaks(&source(0, 0..0), 0, dur);
         let after = first_of_gap + 750;
         assert_eq!(gap.get(after..), full.get(after..), "the chunks after it are where they were");
-        // a source that fails throughout still gives the whole (silent) length
+        // a source that fails throughout still gives the whole (silent) length, without being
+        // asked for every chunk: four failures in a row and the rest is silence
         assert_eq!(source_peaks(&source(0, 0..i64::MAX), 0, dur), vec![(0.0, 0.0); want]);
+        let long = Tick::from_seconds_f64(60.0);
+        let long_want = (48_000usize * 60).div_ceil(PEAK_SAMPLES);
+        let failing_from = |from: i64| source(0, from..i64::MAX);
+        let cut = source_peaks(&failing_from(2 * chunk), 0, long);
+        assert_eq!(cut.len(), long_want);
+        assert!(cut.get(2 * 750..).is_some_and(|rest| rest.iter().all(|p| *p == (0.0, 0.0))));
+        // a read that works in between starts the count of failures over: three failed chunks,
+        // a good one, three more failed, then the rest reads again
+        let gappy = Unreliable { inner: GeneratorSource::demo(filmcraft_media::DemoScene::OceanSunset), short: 0, failing: chunk..4 * chunk };
+        let gaps = source_peaks(&gappy, 0, long);
+        let full_long = source_peaks(&source(0, 0..0), 0, long);
+        assert_eq!(gaps.len(), long_want);
+        assert_eq!(gaps.get(4 * 750..), full_long.get(4 * 750..), "reading goes on after three failures");
+        // a stream that doesn't exist has no peaks, not silent ones
+        assert!(source_peaks(&source(0, 0..0), 7, dur).is_empty());
     }
 }
