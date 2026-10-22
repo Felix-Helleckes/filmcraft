@@ -476,17 +476,13 @@ pub fn spawn_export(s: &mut Session, project: Arc<Project>, seq: ItemId, mut set
         let _ = std::fs::create_dir_all(dir);
     }
     // one export at a time per file: a second one would write it again from the start (#2670)
-    let busy = s
-        .export_targets
-        .iter()
-        .any(|(job, path)| *path == settings.path && s.jobs.iter().any(|j| j.id == *job && !j.progress.finished.load(std::sync::atomic::Ordering::Relaxed)));
-    if busy {
+    if output_busy(s, &settings.path).is_some() {
         return Err(EngineError::Other(format!("{} is being exported already; wait for it to finish or cancel it", file_name(&settings.path))));
     }
     write_sidecar(s, &project, seq, &settings)?;
     let id = s.jobs.iter().map(|j| j.id).max().unwrap_or(0) + 1;
     s.export_targets.retain(|job, _| s.jobs.iter().any(|j| j.id == *job));
-    s.export_targets.insert(id, settings.path.clone());
+    s.export_targets.insert(id, output_identity(&settings.path));
     let job = crate::Job { id, label, progress: Default::default(), result: Default::default() };
     // Export always renders full-resolution media, whatever the proxy toggle says.
     let provider = s.media.full_res_provider(project.clone(), s.services.clone()).recording();
@@ -513,10 +509,67 @@ pub fn spawn_export(s: &mut Session, project: Arc<Project>, seq: ItemId, mut set
     s.jobs.push(job);
     if wait || cfg!(target_arch = "wasm32") {
         run();
-    } else {
-        std::thread::Builder::new().name("filmcraft-export".into()).spawn(run).map_err(|e| EngineError::Other(e.to_string()))?;
+    } else if let Err(e) = spawn_export_thread(run) {
+        // nothing will write the file: the job and its claim on the file go, or the next export of
+        // it would be refused as busy for good (#2721 review)
+        s.jobs.retain(|j| j.id != id);
+        s.export_targets.remove(&id);
+        s.export_offline.remove(&id);
+        return Err(EngineError::Other(format!("can't start the export: {e}")));
     }
     Ok(id)
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Tests: the next export started on this thread fails to start its thread.
+    pub(crate) static FAIL_EXPORT_THREAD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+fn spawn_export_thread(run: impl FnOnce() + Send + 'static) -> std::io::Result<()> {
+    #[cfg(test)]
+    if FAIL_EXPORT_THREAD.with(|f| f.replace(false)) {
+        return Err(std::io::Error::other("injected thread start failure"));
+    }
+    std::thread::Builder::new().name("filmcraft-export".into()).spawn(run).map(|_| ())
+}
+
+/// The file an output path names, the same for every spelling of it (`/x/out.wav`,
+/// `/x/./out.wav`, a relative path): the file's canonical path, else its folder's with the file
+/// name (an output not written yet), else the absolute path with `.` and `..` resolved.
+pub fn output_identity(path: &str) -> String {
+    let p = Path::new(path);
+    if let Ok(c) = std::fs::canonicalize(p) {
+        return c.to_string_lossy().into_owned();
+    }
+    let abs = std::path::absolute(p).unwrap_or_else(|_| p.to_path_buf());
+    let mut out = std::path::PathBuf::new();
+    for c in abs.components() {
+        match c {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            c => out.push(c),
+        }
+    }
+    if let (Some(dir), Some(name)) = (out.parent(), out.file_name())
+        && let Ok(dir) = std::fs::canonicalize(dir)
+    {
+        return dir.join(name).to_string_lossy().into_owned();
+    }
+    out.to_string_lossy().into_owned()
+}
+
+/// The export job writing the file `path` names while it runs (#2670): another export of that
+/// file waits (the queue) or is refused (Export, `file.exportMedia`).
+pub fn output_busy(s: &Session, path: &str) -> Option<u64> {
+    let identity = output_identity(path);
+    s.export_targets
+        .iter()
+        .filter(|(_, target)| **target == identity)
+        .map(|(job, _)| *job)
+        .find(|job| s.jobs.iter().any(|j| j.id == *job && !j.progress.finished.load(Ordering::Relaxed)))
 }
 
 /// Last-resort guard for a background job body (export, previews, proxies, …): a panic marks the
@@ -704,6 +757,16 @@ pub fn pump_queue(s: &mut Session, wait: bool) {
             return;
         };
         let it = s.export_queue.items[i].clone();
+        // its file is being exported by Export or an agent: the item waits, still ready, and
+        // starts once that ends (#2721 review), instead of failing
+        if output_busy(s, &it.settings.path).is_some() {
+            if !wait {
+                return;
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            continue;
+        }
         let label = format!("Queue: {} → {}", it.sequence_name, file_name(&it.settings.path));
         match spawn_export(s, it.project.clone(), it.sequence, it.settings.clone(), label, wait) {
             Ok(job) => {

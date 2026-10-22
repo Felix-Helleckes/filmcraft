@@ -150,13 +150,8 @@ pub fn export_params(app: &FilmcraftApp) -> Value {
 /// The export job writing the file these settings export to, while it runs (#2670): the settings
 /// then can't change under it, and Export cancels it instead of starting the file over.
 pub fn running_export(app: &FilmcraftApp) -> Option<u64> {
-    let path = output_path(&app.ui.export);
-    let s = &app.session;
-    s.export_targets
-        .iter()
-        .filter(|(_, p)| **p == path)
-        .map(|(job, _)| *job)
-        .find(|job| s.jobs.iter().any(|j| j.id == *job && !j.progress.finished.load(std::sync::atomic::Ordering::Relaxed)))
+    // the same file however its path is spelled, as the engine compares them
+    filmcraft_engine::export_tools::output_busy(&app.session, &output_path(&app.ui.export))
 }
 
 fn sync_sequence(app: &mut FilmcraftApp) {
@@ -1078,6 +1073,11 @@ fn preview_column(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, seq_id:
             .max_rect(Rect::from_min_max(pos2(rect.min.x + 14.0, pv_area.max.y + 8.0), pos2(rect.max.x - 14.0, rect.max.y - 50.0)))
             .id_salt("export-right"),
     );
+    // Range and Scaling are the export's too: locked while this file is being exported; the
+    // Export / Cancel button below is drawn outside this child and stays usable (#2721 review)
+    if running_export(app).is_some() {
+        child.disable();
+    }
     let ex = &mut app.ui.export;
     let has_work_area = q.work_area.is_some();
     child.horizontal(|ui| {
