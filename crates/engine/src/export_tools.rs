@@ -541,7 +541,18 @@ fn spawn_export_thread(run: impl FnOnce() + Send + 'static) -> std::io::Result<(
 /// real folder plus its name.
 pub fn output_identity(path: &str) -> String {
     let p = Path::new(path);
-    let abs = std::path::absolute(p).unwrap_or_else(|_| p.to_path_buf());
+    let mut abs = std::path::absolute(p).unwrap_or_else(|_| p.to_path_buf());
+    // a final symlink that points to a file not written yet: writing it creates that file
+    for _ in 0..8 {
+        let Ok(target) = std::fs::read_link(&abs) else { break };
+        if abs.exists() {
+            break;
+        }
+        abs = match abs.parent() {
+            Some(dir) if target.is_relative() => dir.join(target),
+            _ => target,
+        };
+    }
     let parts: Vec<std::path::Component> = abs.components().collect();
     // the longest prefix that exists on disk (at most every component)
     let mut base = None;
@@ -565,7 +576,10 @@ pub fn output_identity(path: &str) -> String {
             c => out.push(c),
         }
     }
-    out.to_string_lossy().into_owned()
+    let id = out.to_string_lossy().into_owned();
+    // the default volumes of macOS and Windows ignore case: `Out.wav` is `out.wav` there (on a
+    // case-sensitive volume this only makes two such names wait for each other)
+    if cfg!(any(target_os = "macos", target_os = "windows")) { id.to_lowercase() } else { id }
 }
 
 /// The export job writing the file `path` names while it runs (#2670): another export of that

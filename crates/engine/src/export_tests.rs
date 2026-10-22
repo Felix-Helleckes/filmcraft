@@ -876,6 +876,13 @@ fn a_busy_output_is_found_by_any_spelling_of_its_path() {
         let via_link = format!("{}/alias/../out.wav", dir.0.display());
         assert_eq!(crate::export_tools::output_identity(&via_link), crate::export_tools::output_identity(&dir.path("real/out.wav")));
         assert_ne!(crate::export_tools::output_identity(&via_link), crate::export_tools::output_identity(&path));
+        // a dangling symlink names the file it will create (#2721 review)
+        std::os::unix::fs::symlink("target.wav", dir.0.join("dangling.wav")).unwrap();
+        assert_eq!(crate::export_tools::output_identity(&dir.path("dangling.wav")), crate::export_tools::output_identity(&dir.path("target.wav")));
+    }
+    // case-insensitive volumes: another spelling of the name is the same file
+    if cfg!(any(target_os = "macos", target_os = "windows")) {
+        assert_eq!(crate::export_tools::output_identity(&dir.path("OUT.wav")), crate::export_tools::output_identity(&path));
     }
     let progress = busy_with(&mut s, &path);
     let e = s
