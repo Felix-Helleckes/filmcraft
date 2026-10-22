@@ -34,6 +34,16 @@ fn a_declined_hardware_decoder_is_told_once_with_its_reason() {
         step(&mut h);
     }
     assert!(h.state().ui.status.is_empty(), "{}", h.state().ui.status);
+    // two reasons before the next frame: both are told (#2754 review)
+    let (a, b) = (
+        "AV1 video: no AV1 decoder MFT (the AV1 Video Extension is not installed)",
+        "VP9 video: no VP9 decoder MFT (the VP9 Video Extensions are not installed)",
+    );
+    filmcraft_codecs::hw::note_hw_declined_because(a);
+    filmcraft_codecs::hw::note_hw_declined_because(b);
+    step(&mut h);
+    let status = h.state().ui.status.clone();
+    assert!(status.contains(a) && status.contains(b), "{status}");
     // and agents can read it
     let stats = h.state_mut().session.execute("perf.stats", json!({})).unwrap();
     let reasons = stats["decode"]["hardware"]["declinedReasons"].as_array().cloned().unwrap_or_default();

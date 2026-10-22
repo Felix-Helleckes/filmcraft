@@ -1678,7 +1678,9 @@ impl FilmcraftApp {
     /// (on Windows, e.g. that the HEVC Video Extensions are not installed; #2751).
     pub(crate) fn tell_hw_declines(&mut self) {
         let reasons = filmcraft_engine::perf::hw_declined_reasons();
-        if let Some(reason) = reasons.get(self.hw_declines_told..).and_then(|new| new.last()) {
+        // every reason that came since the last pass, not only the newest
+        if let Some(new) = reasons.get(self.hw_declines_told..).filter(|new| !new.is_empty()) {
+            let reason = new.join("; ");
             self.ui.status =
                 tlf!("Hardware decoding isn't used for {reason}. FilmCraft decodes it on the CPU, so 4K or high-bitrate video can play back slowly.", reason);
         }
