@@ -868,6 +868,15 @@ fn a_busy_output_is_found_by_any_spelling_of_its_path() {
     let alias = format!("{}/./sub/../out.wav", dir.0.display());
     std::fs::create_dir_all(dir.0.join("sub")).unwrap();
     assert_eq!(crate::export_tools::output_identity(&path), crate::export_tools::output_identity(&alias));
+    // through a symlinked folder, `..` goes up from where the link points (#2721 review)
+    #[cfg(unix)]
+    {
+        std::fs::create_dir_all(dir.0.join("real/sub")).unwrap();
+        std::os::unix::fs::symlink(dir.0.join("real/sub"), dir.0.join("alias")).unwrap();
+        let via_link = format!("{}/alias/../out.wav", dir.0.display());
+        assert_eq!(crate::export_tools::output_identity(&via_link), crate::export_tools::output_identity(&dir.path("real/out.wav")));
+        assert_ne!(crate::export_tools::output_identity(&via_link), crate::export_tools::output_identity(&path));
+    }
     let progress = busy_with(&mut s, &path);
     let e = s
         .execute("file.exportMedia", json!({"path": alias, "preset": "Waveform Audio 48 kHz 16-bit", "range": "custom", "startSeconds": 0, "endSeconds": 0.1}))

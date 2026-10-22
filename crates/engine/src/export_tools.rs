@@ -535,16 +535,28 @@ fn spawn_export_thread(run: impl FnOnce() + Send + 'static) -> std::io::Result<(
 }
 
 /// The file an output path names, the same for every spelling of it (`/x/out.wav`,
-/// `/x/./out.wav`, a relative path): the file's canonical path, else its folder's with the file
-/// name (an output not written yet), else the absolute path with `.` and `..` resolved.
+/// `/x/./out.wav`, a relative path, a path through a symlinked folder): its longest part that
+/// exists, canonicalized (symlinks resolved, so a `..` after a link goes up from where the link
+/// points), then the rest with `.` and `..` resolved. An output not written yet is therefore its
+/// real folder plus its name.
 pub fn output_identity(path: &str) -> String {
     let p = Path::new(path);
-    if let Ok(c) = std::fs::canonicalize(p) {
-        return c.to_string_lossy().into_owned();
-    }
     let abs = std::path::absolute(p).unwrap_or_else(|_| p.to_path_buf());
-    let mut out = std::path::PathBuf::new();
-    for c in abs.components() {
+    let parts: Vec<std::path::Component> = abs.components().collect();
+    // the longest prefix that exists on disk (at most every component)
+    let mut base = None;
+    for n in (1..=parts.len()).rev() {
+        let prefix: std::path::PathBuf = parts.iter().take(n).collect();
+        if let Ok(real) = std::fs::canonicalize(&prefix) {
+            base = Some((real, n));
+            break;
+        }
+    }
+    let (mut out, rest) = match base {
+        Some((real, n)) => (real, parts.get(n..).unwrap_or_default()),
+        None => (std::path::PathBuf::new(), parts.as_slice()),
+    };
+    for c in rest {
         match c {
             std::path::Component::CurDir => {}
             std::path::Component::ParentDir => {
@@ -552,11 +564,6 @@ pub fn output_identity(path: &str) -> String {
             }
             c => out.push(c),
         }
-    }
-    if let (Some(dir), Some(name)) = (out.parent(), out.file_name())
-        && let Ok(dir) = std::fs::canonicalize(dir)
-    {
-        return dir.join(name).to_string_lossy().into_owned();
     }
     out.to_string_lossy().into_owned()
 }
@@ -760,7 +767,9 @@ pub fn pump_queue(s: &mut Session, wait: bool) {
         // its file is being exported by Export or an agent: the item waits, still ready, and
         // starts once that ends (#2721 review), instead of failing
         if output_busy(s, &it.settings.path).is_some() {
-            if !wait {
+            // on the web the other export only advances between frames (`pump_jobs`): waiting
+            // here would never see it end
+            if !wait || cfg!(target_arch = "wasm32") {
                 return;
             }
             #[cfg(not(target_arch = "wasm32"))]
