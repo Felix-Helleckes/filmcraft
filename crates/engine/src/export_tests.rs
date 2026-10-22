@@ -868,9 +868,17 @@ fn a_path_naming_another_container_is_reported() {
     assert!(note.contains("a.mxf.mov") && note.contains("mxf-op1a") && note.contains("dnxhr"), "{r}");
     let r = run(&mut s, dir.path("b.avi"), json!({"format": "mjpeg"}));
     assert!(r["note"].as_str().is_some_and(|n| n.contains("b.avi.mov")), "{r}");
+    // an image file's extension on a video export is reported too, with the extension written
+    let r = run(&mut s, dir.path("shot.png"), json!({"format": "dnxhr", "dnxProfile": "sq"}));
+    assert!(r["note"].as_str().is_some_and(|n| n.contains("shot.png.mov") && n.contains(".mov")), "{r}");
     // the queue says the same
     let q = s.execute("export.queue.add", json!({"path": dir.path("q.mxf"), "format": "dnxhr"})).unwrap();
     assert!(q["note"].as_str().is_some_and(|n| n.contains("q.mxf.mov")), "{q}");
+    // several sequences at once: the note points to their entries instead of naming one file
+    let first = s.state.active_sequence.unwrap().0;
+    let second = s.execute("file.newSequence", json!({"name": "Second"})).unwrap()["sequence"].as_u64().unwrap();
+    let q = s.execute("export.queue.add", json!({"path": dir.path("multi.mxf"), "format": "dnxhr", "sequences": [first, second]})).unwrap();
+    assert!(q["note"].as_str().is_some_and(|n| n.contains("added entries") && !n.contains("multi.mxf.mov`")), "{q}");
     // no note where nothing surprising happens
     for (path, extra) in [
         ("c.mov", json!({"format": "dnxhr", "dnxProfile": "sq"})),
