@@ -3490,7 +3490,7 @@ mod peaks_tests {
     struct Unreliable {
         inner: GeneratorSource,
         short: usize,
-        failing: std::ops::Range<i64>,
+        failing: Vec<std::ops::Range<i64>>,
     }
 
     impl MediaSource for Unreliable {
@@ -3501,7 +3501,7 @@ mod peaks_tests {
             self.inner.video_frame(req)
         }
         fn audio(&self, start: i64, frames: usize, sample_rate: u32) -> Result<filmcraft_frame::AudioBuffer> {
-            if self.failing.contains(&start) {
+            if self.failing.iter().any(|r| r.contains(&start)) {
                 return Err(filmcraft_media::MediaError::Io("simulated audio read failure".into()));
             }
             let mut buf = self.inner.audio(start, frames, sample_rate)?;
@@ -3518,12 +3518,14 @@ mod peaks_tests {
     fn peaks_cover_the_whole_duration_whatever_the_source_returns() {
         let dur = Tick::from_seconds_f64(10.0);
         let want = (48_000usize * 10).div_ceil(PEAK_SAMPLES);
-        let source = |short, failing| Unreliable { inner: GeneratorSource::demo(filmcraft_media::DemoScene::OceanSunset), short, failing };
+        let source = |short, failing| Unreliable { inner: GeneratorSource::demo(filmcraft_media::DemoScene::OceanSunset), short, failing: vec![failing] };
         // as it is: every peak there
         assert_eq!(source_peaks(&source(0, 0..0), 0, dur).len(), want);
         // short chunks: padded, not shifted
         let short = source_peaks(&source(300, 0..0), 0, dur);
         assert_eq!(short.len(), want);
+        // the padding is silence: the last peak of each chunk, which lost its samples, is (0, 0)
+        assert_eq!(short.get(749), Some(&(0.0, 0.0)));
         // a chunk that fails is silence; the chunks after it keep their place
         let chunk = (PEAK_SAMPLES * 750) as i64;
         let gap = source_peaks(&source(0, chunk..chunk + 1), 0, dur);
@@ -3538,17 +3540,24 @@ mod peaks_tests {
         assert_eq!(source_peaks(&source(0, 0..i64::MAX), 0, dur), vec![(0.0, 0.0); want]);
         let long = Tick::from_seconds_f64(60.0);
         let long_want = (48_000usize * 60).div_ceil(PEAK_SAMPLES);
-        let failing_from = |from: i64| source(0, from..i64::MAX);
+        // four failed chunks, then good ones: the cutoff stops reading, so the rest is silent
+        // although it could be read
+        let failing_from = |from: i64| source(0, from..from + 4 * chunk);
         let cut = source_peaks(&failing_from(2 * chunk), 0, long);
         assert_eq!(cut.len(), long_want);
         assert!(cut.get(2 * 750..).is_some_and(|rest| rest.iter().all(|p| *p == (0.0, 0.0))));
         // a read that works in between starts the count of failures over: three failed chunks,
         // a good one, three more failed, then the rest reads again
-        let gappy = Unreliable { inner: GeneratorSource::demo(filmcraft_media::DemoScene::OceanSunset), short: 0, failing: chunk..4 * chunk };
+        let gappy = Unreliable {
+            inner: GeneratorSource::demo(filmcraft_media::DemoScene::OceanSunset),
+            short: 0,
+            failing: vec![chunk..4 * chunk, 5 * chunk..8 * chunk],
+        };
         let gaps = source_peaks(&gappy, 0, long);
         let full_long = source_peaks(&source(0, 0..0), 0, long);
         assert_eq!(gaps.len(), long_want);
-        assert_eq!(gaps.get(4 * 750..), full_long.get(4 * 750..), "reading goes on after three failures");
+        assert_eq!(gaps.get(4 * 750..5 * 750), full_long.get(4 * 750..5 * 750), "reading goes on after three failures");
+        assert_eq!(gaps.get(8 * 750..), full_long.get(8 * 750..), "and after a second run of three: the count started over");
         // a stream that doesn't exist has no peaks, not silent ones
         assert!(source_peaks(&source(0, 0..0), 7, dur).is_empty());
     }
