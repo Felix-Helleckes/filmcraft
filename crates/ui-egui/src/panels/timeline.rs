@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex};
 
 use egui::{Align2, Color32, CursorIcon, Pos2, Rect, Sense, Stroke, StrokeKind, pos2, vec2};
 use filmcraft_project::{ClipId, ItemId, MarkerId, Sequence, TrackId, TrackItem, TrackKind};
-use filmcraft_time::{FrameRate, TICKS_PER_SECOND, Tick, TimeDisplay, format_time};
+use filmcraft_time::{FrameRate, TICKS_PER_SECOND, Tick, TimeDisplay, TimeRange, format_time};
 use serde_json::{Value, json};
 
 use crate::FilmcraftApp;
@@ -22,7 +22,7 @@ use crate::icons::{self, Icon};
 use crate::state::{ThumbnailMode, TimelineView, Tool};
 use crate::theme::Tokens;
 
-use super::timeline_hit::{EdgeKind, Grab, edge_geometry, grab_at, marker_at, marker_range_rect, marker_rect, marker_under_pointer};
+use super::timeline_hit::{EDGE_PX, EdgeKind, Grab, edge_geometry, grab_at, marker_at, marker_range_rect, marker_rect, marker_under_pointer, work_area_rect};
 pub use super::timeline_hit::{Hit, ROLL_PX, hit, selection_trim_kind};
 
 const TOP_H: f32 = 58.0; // timecode + toolbar (left) / ruler (right)
@@ -156,6 +156,15 @@ pub enum Drag {
         from: Tick,
         start: Tick,
         duration: Tick,
+    },
+    /// The work area bar dragged by an end (`edge`: that end moves) or its middle (the bar moves);
+    /// `start` / `end` are where it is shown now, committed on release.
+    WorkArea {
+        edge: Option<filmcraft_edit::Edge>,
+        /// As in [`Drag::Trim`].
+        from: Tick,
+        start: Tick,
+        end: Tick,
     },
     Pan {
         last: Pos2,
@@ -294,6 +303,10 @@ pub fn zoom_about(v: &mut TimelineView, factor: f64, anchor_secs: f64, width: f3
     v.target_scroll = (anchor_secs - x as f64 / new).max(0.0);
 }
 
+/// How strongly a track's colour label tints its header and its lane.
+const TRACK_HEADER_TINT: f32 = 0.18;
+const TRACK_LANE_TINT: f32 = 0.10;
+
 fn label_color(app: &FilmcraftApp, l: filmcraft_project::Label) -> Color32 {
     crate::panels::settings::label_color(app, l)
 }
@@ -340,7 +353,8 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
             v.fit_pending = false;
             v.fit_empty = empty.then_some(v.target_pps);
         }
-        let k = 1.0 - (-dt * 20.0).exp();
+        // eased, or in one step with Settings ▸ Appearance ▸ animations off (#2325)
+        let k = if app.session.prefs.appearance.animations { 1.0 - (-dt * 20.0).exp() } else { 1.0 };
         let zooming = (v.pps - v.target_pps).abs() / v.target_pps > 0.001;
         // video thumbnails keep the layout of the zoom a gesture or animation started at (#1094)
         if zooming || matches!(app.tl.drag, Some(Drag::ZoomBar { mode: 1 | 2, .. })) {
@@ -455,6 +469,10 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
         }
         let bg = if r.index % 2 == 0 { t.tl_track_bg } else { t.tl_track_bg_alt };
         painter.rect_filled(row, 0.0, bg);
+        // a track's colour label tints its lane (#1186)
+        if let Some(l) = seq.track(r.track).and_then(|tr| tr.label) {
+            painter.rect_filled(row, 0.0, label_color(app, l).gamma_multiply(TRACK_LANE_TINT));
+        }
         painter.line_segment([pos2(row.min.x, r.rect.max.y - 0.5), pos2(row.max.x, r.rect.max.y - 0.5)], Stroke::new(1.0, t.separator));
         // the top video track also gets a line above it
         if r.kind == TrackKind::Video && r.index + 1 == nv {
@@ -1258,6 +1276,36 @@ fn draw_headers(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, rows:
         }
         let p = ui.painter().with_clip_rect(visible);
         p.rect_filled(hrect, 0.0, t.tl_header_bg);
+        // 0. colour label (#1186): a tint over the header, and the strip at its left edge, which
+        // opens the colour menu
+        let strip = Rect::from_min_max(hrect.min, pos2(hrect.min.x + 9.0, hrect.max.y));
+        if let Some(l) = tr.label {
+            let c = label_color(app, l);
+            p.rect_filled(hrect, 0.0, c.gamma_multiply(TRACK_HEADER_TINT));
+            p.rect_filled(Rect::from_min_max(strip.min, pos2(strip.min.x + 5.0, strip.max.y)), 0.0, c);
+        }
+        let cresp = ui.interact(strip.intersect(visible), egui::Id::new(("trackColor", r.track.0)), Sense::click()).on_hover_text(tl!("Track Color"));
+        app.auto.add(&format!("timeline.track.{}{}.color", if r.kind == TrackKind::Video { "V" } else { "A" }, r.index + 1), strip, "Track Color");
+        if cresp.hovered() && tr.label.is_none() {
+            p.rect_filled(Rect::from_min_max(strip.min, pos2(strip.min.x + 5.0, strip.max.y)), 0.0, t.hover);
+        }
+        egui::Popup::menu(&cresp).show(|ui| {
+            let prefix = format!("timeline.track.{}{}.color", if r.kind == TrackKind::Video { "V" } else { "A" }, r.index + 1);
+            let none = ui.selectable_label(tr.label.is_none(), tl!("None"));
+            app.auto.add(&format!("{prefix}.None"), none.rect, "None");
+            if none.clicked() {
+                actions.push(("timeline.setTrack".into(), json!({"track": r.track.0, "label": ""})));
+                ui.close();
+            }
+            // the user's label names and colours, as in Edit ▸ Label
+            let labels = app.session.prefs.labels.clone();
+            for l in filmcraft_project::Label::ALL {
+                if crate::menus::label_choice(ui, &mut app.auto, &labels, l, &prefix).clicked() {
+                    actions.push(("timeline.setTrack".into(), json!({"track": r.track.0, "label": l.name()})));
+                    ui.close();
+                }
+            }
+        });
         p.line_segment([pos2(hrect.min.x, hrect.max.y - 0.5), pos2(hrect.max.x, hrect.max.y - 0.5)], Stroke::new(1.0, t.separator));
         if r.kind == TrackKind::Video && r.index + 1 == seq.video_tracks.len() {
             p.line_segment([pos2(hrect.min.x, hrect.min.y + 0.5), pos2(hrect.max.x, hrect.min.y + 0.5)], Stroke::new(1.0, t.separator));
@@ -1581,6 +1629,27 @@ fn draw_top(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, seq: &Sequenc
             });
         }
     }
+    // work area bar: between the markers row and the time labels, as dragged while a drag of it runs
+    let shown = match app.tl.drag {
+        Some(Drag::WorkArea { start, end, .. }) => Some(TimeRange::from_bounds(start, end)),
+        _ => seq.work_area,
+    };
+    if let Some(area) = shown {
+        let r = work_area_rect(layout, area);
+        clip.rect_filled(r, 1.0, t.text_dim);
+        for x in [r.min.x, r.max.x] {
+            clip.rect_filled(Rect::from_center_size(pos2(x, r.center().y), vec2(3.0, r.height() + 2.0)), 1.0, t.text);
+        }
+        app.auto.add("timeline.workArea", r.intersect(ruler), "Work Area Bar");
+        let fmt = |tick: Tick| format_time(tick, rate, seq.settings.drop_frame, TimeDisplay::Timecode, 48000);
+        if ui.rect_contains_pointer(r.expand2(vec2(EDGE_PX, 1.0)).intersect(ruler)) {
+            egui::Tooltip::always_open(ui.ctx().clone(), ui.layer_id(), egui::Id::new("work-area-tip"), egui::PopupAnchor::Pointer).show(|ui| {
+                ui.label(tlf!("Start: {tc}", tc = fmt(area.start)));
+                ui.label(tlf!("End: {tc}", tc = fmt(area.end())));
+                ui.label(tlf!("Duration: {tc}", tc = fmt(area.duration)));
+            });
+        }
+    }
     // markers: 8 × 12 pt pentagons in the marker colour, on the top row
     for m in &seq.markers {
         let x = layout.x_of(m.start);
@@ -1736,7 +1805,7 @@ fn vertical_scrollbar(ui: &mut egui::Ui, bar: Rect, value: &mut f32, max: f32, i
 }
 
 /// Snap `t` to nearby candidates (edits, playhead, markers, in/out). Returns snapped tick.
-fn snap(app: &mut FilmcraftApp, seq: &Sequence, layout: &Layout, t: Tick, exclude: &[ClipId]) -> Tick {
+pub(super) fn snap(app: &mut FilmcraftApp, seq: &Sequence, layout: &Layout, t: Tick, exclude: &[ClipId]) -> Tick {
     snap_to(app, seq, layout, t, exclude, true)
 }
 
@@ -1796,6 +1865,7 @@ pub fn hit_json(app: &FilmcraftApp, pos: Pos2, mods: egui::Modifiers) -> Value {
     };
     match grab.hit() {
         Hit::Ruler => json!({"hit": "ruler", "time": t.0}),
+        Hit::WorkArea { edge } => json!({"hit": "workArea", "edge": edge.map(|e| format!("{e:?}")), "time": t.0}),
         Hit::Clip { track, clip, edge } => {
             json!({"hit": "clip", "track": track.0, "clip": clip.0, "edge": edge.map(|e| format!("{e:?}")), "kind": kind, "time": t.0})
         }
@@ -2309,6 +2379,8 @@ fn interact(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, layout: &
                 (_, Grab::Edge { .. }) => CursorIcon::ResizeColumn,
                 (Tool::Selection, Grab::Other(Hit::Transition { edge: Some(_), .. })) => CursorIcon::ResizeColumn,
                 (Tool::Selection, Grab::Other(Hit::Transition { edge: None, .. })) => CursorIcon::Grab,
+                (_, Grab::Other(Hit::WorkArea { edge: Some(_) })) => CursorIcon::ResizeColumn,
+                (_, Grab::Other(Hit::WorkArea { edge: None })) => CursorIcon::Grab,
                 (_, Grab::Volume { .. }) if tool == Tool::Pen || mods.command => CursorIcon::Crosshair,
                 (_, Grab::Volume { .. }) => CursorIcon::ResizeVertical,
                 (Tool::Razor, Grab::Other(Hit::Clip { .. })) => CursorIcon::Crosshair,
@@ -2360,6 +2432,9 @@ fn interact(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, layout: &
                 Some(Drag::Pan { last, start_scroll: app.ui.timeline.target_scroll, start_v: app.ui.timeline.v_scroll })
             }
             (_, Grab::Other(Hit::Ruler)) => Some(Drag::Scrub { initial: app.session.playhead() }),
+            (_, Grab::Other(Hit::WorkArea { edge })) => {
+                seq.work_area.filter(|_| resp.drag_started()).map(|w| Drag::WorkArea { edge, from: t, start: w.start, end: w.end() })
+            }
             (Tool::Hand, _) => Some(Drag::Pan { last: p, start_scroll: app.ui.timeline.target_scroll, start_v: app.ui.timeline.v_scroll }),
             (Tool::Zoom, _) => {
                 if resp.clicked() {
@@ -2635,6 +2710,21 @@ fn interact(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, layout: &
                 let (start, duration) = span.unwrap_or((start, duration));
                 Some(Drag::Transition { id, edge, from, start, duration })
             }
+            Drag::WorkArea { edge, from, start, end } => {
+                // the bar as it was at the press: the sequence keeps it until the release
+                let (s0, e0) = seq.work_area.map(|w| (w.start, w.end())).unwrap_or((start, end));
+                let fd = rate.frame_duration();
+                let delta = rate.snap_nearest(t_here - from);
+                let (start, end) = match edge {
+                    Some(filmcraft_edit::Edge::In) => (snap(app, seq, layout, rate.snap_nearest(s0 + delta), &[]).min(e0 - fd).max(Tick::ZERO), e0),
+                    Some(filmcraft_edit::Edge::Out) => (s0, snap(app, seq, layout, rate.snap_nearest(e0 + delta), &[]).max(s0 + fd)),
+                    None => {
+                        let d = delta.max(Tick::ZERO - s0);
+                        (s0 + d, e0 + d)
+                    }
+                };
+                Some(Drag::WorkArea { edge, from, start, end })
+            }
             Drag::Volume(v) => Some(Drag::Volume(super::timeline_volume::drag(app, ui, seq, layout, v, p.y))),
             Drag::Marquee { start, before, add, individual } => {
                 let r = Rect::from_two_pos(start, p);
@@ -2707,6 +2797,10 @@ fn interact(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, layout: &
                     let moved = seq.all_tracks().find_map(|tr| tr.transitions.iter().find(|x| x.id == id)).is_some_and(|x| (x.start, x.duration) != (start, duration));
                     moved.then(|| app.session.execute("sequence.setTransition", json!({"transition": id.0, "start": start.0, "duration": duration.0})))
                 }
+                Drag::WorkArea { start, end, .. } => {
+                    let moved = seq.work_area.is_some_and(|w| (w.start, w.end()) != (start, end));
+                    moved.then(|| app.session.execute("sequence.setWorkArea", json!({"start": start.0, "end": end.0})))
+                }
                 Drag::Marquee { start, before, add, individual } => {
                     app.session.state.selection = before;
                     // egui ends a drag on Escape: that cancels the box, as in the Project panel
@@ -2725,6 +2819,21 @@ fn interact(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, layout: &
             }
         } else {
             app.tl.drag = None;
+        }
+    }
+
+    // ---- double-click the work area bar: it spans the part of the sequence the ruler shows
+    if resp.double_clicked()
+        && let Some(p) = resp.interact_pointer_pos()
+        && let Hit::WorkArea { .. } = hit(seq, layout, p)
+    {
+        let start = rate.snap_nearest(layout.tick_at(layout.content.min.x).max(Tick::ZERO));
+        let end = rate.snap_nearest(layout.tick_at(layout.content.max.x)).min(seq.duration());
+        // a ruler scrolled past the end of the sequence leaves the bar as it is
+        if end > start
+            && let Err(e) = app.session.execute("sequence.setWorkArea", json!({"start": start.0, "end": end.0}))
+        {
+            app.ui.status = e.to_string();
         }
     }
 
@@ -2822,76 +2931,80 @@ fn interact(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, layout: &
         }
     }
     resp.context_menu(|ui| {
-        ui.set_min_width(220.0);
-        if let Some(marker) = ctx.data(|d| d.get_temp::<Option<MarkerId>>(marker_menu_id)).flatten() {
-            marker_menu(app, &ctx, ui, marker);
-            return;
-        }
-        if let Some(target) = ctx.data(|d| d.get_temp::<Option<EditPointTarget>>(edit_point_menu_id)).flatten() {
-            edit_point_menu(app, &ctx, ui, seq, target);
-            return;
-        }
-        if ctx.data(|d| d.get_temp::<bool>(gap_menu_id)).unwrap_or(false) {
-            gap_menu(app, &ctx, ui);
-            return;
-        }
-        let sel = app.session.state.selection.clone();
-        let picked: Vec<&filmcraft_project::TrackItem> = sel.iter().filter_map(|c| seq.find_item(*c).map(|(_, it)| it)).collect();
-        let all_enabled = !picked.is_empty() && picked.iter().all(|it| it.enabled);
-        let linked = picked.iter().any(|it| it.link.is_some());
-        let mut first = true;
-        for group in CLIP_MENU {
-            if !std::mem::take(&mut first) {
-                ui.separator();
+        // a long menu scrolls instead of running off the bottom of the screen (#2852)
+        let max_height = (ui.ctx().content_rect().height() - 16.0).max(0.0);
+        egui::ScrollArea::vertical().id_salt("clip-menu-scroll").max_height(max_height).min_scrolled_height(max_height).show(ui, |ui| {
+            ui.set_min_width(220.0);
+            if let Some(marker) = ctx.data(|d| d.get_temp::<Option<MarkerId>>(marker_menu_id)).flatten() {
+                marker_menu(app, &ctx, ui, marker);
+                return;
             }
-            for &(label, cmd) in *group {
-                if cmd == "edit.label" {
-                    ui.add_enabled_ui(!picked.is_empty(), |ui| {
-                        let menu = ui.menu_button(crate::i18n::t(label), |ui| {
-                            // the user's label names and colours, as in Edit ▸ Label (#786)
-                            let labels = app.session.prefs.labels.clone();
-                            for l in filmcraft_project::Label::ALL {
-                                if crate::menus::label_choice(ui, &mut app.auto, &labels, l, "timeline.clipMenu.label").clicked() {
-                                    if let Err(error) = app.session.execute("edit.label", json!({"label":l.name()})) {
-                                        app.ui.status = error.to_string();
+            if let Some(target) = ctx.data(|d| d.get_temp::<Option<EditPointTarget>>(edit_point_menu_id)).flatten() {
+                edit_point_menu(app, &ctx, ui, seq, target);
+                return;
+            }
+            if ctx.data(|d| d.get_temp::<bool>(gap_menu_id)).unwrap_or(false) {
+                gap_menu(app, &ctx, ui);
+                return;
+            }
+            let sel = app.session.state.selection.clone();
+            let picked: Vec<&filmcraft_project::TrackItem> = sel.iter().filter_map(|c| seq.find_item(*c).map(|(_, it)| it)).collect();
+            let all_enabled = !picked.is_empty() && picked.iter().all(|it| it.enabled);
+            let linked = picked.iter().any(|it| it.link.is_some());
+            let mut first = true;
+            for group in CLIP_MENU {
+                if !std::mem::take(&mut first) {
+                    ui.separator();
+                }
+                for &(label, cmd) in *group {
+                    if cmd == "edit.label" {
+                        ui.add_enabled_ui(!picked.is_empty(), |ui| {
+                            let menu = ui.menu_button(crate::i18n::t(label), |ui| {
+                                // the user's label names and colours, as in Edit ▸ Label (#786)
+                                let labels = app.session.prefs.labels.clone();
+                                for l in filmcraft_project::Label::ALL {
+                                    if crate::menus::label_choice(ui, &mut app.auto, &labels, l, "timeline.clipMenu.label").clicked() {
+                                        if let Err(error) = app.session.execute("edit.label", json!({"label":l.name()})) {
+                                            app.ui.status = error.to_string();
+                                        }
+                                        ui.close();
                                     }
-                                    ui.close();
+                                }
+                            });
+                            app.auto.add_response("timeline.clipMenu.edit.label", &menu.response, crate::i18n::t(label));
+                        });
+                        continue;
+                    }
+                    if cmd == "clip.multicam" {
+                        multicam_menu(app, ui, &picked);
+                        continue;
+                    }
+                    let label = match cmd {
+                        "clip.enable" if all_enabled => tl!("✓ Enable"),
+                        "clip.link" if linked => tl!("Unlink"),
+                        _ => crate::i18n::t(label),
+                    };
+                    let r = ui.add_enabled(!sel.is_empty() && app.session.is_enabled(cmd), egui::Button::new(label));
+                    app.auto.add(&format!("timeline.clipMenu.{cmd}"), r.rect, label);
+                    if r.clicked() {
+                        match crate::menus::invoke(app, &ctx, cmd, json!({})) {
+                            // Unlink (#220): the clips were selected together because they were linked;
+                            // keep only the one right-clicked, so it can be dragged away from the others
+                            Ok(v) if cmd == "clip.link" && v["linked"] == json!(false) => {
+                                if let Some(clip) = ctx.data(|d| d.get_temp::<ClipId>(menu_clip_id))
+                                    && app.session.state.selection.contains(&clip)
+                                {
+                                    let _ = app.session.execute("timeline.select", json!({"clips": [clip.0]}));
                                 }
                             }
-                        });
-                        app.auto.add_response("timeline.clipMenu.edit.label", &menu.response, crate::i18n::t(label));
-                    });
-                    continue;
-                }
-                if cmd == "clip.multicam" {
-                    multicam_menu(app, ui, &picked);
-                    continue;
-                }
-                let label = match cmd {
-                    "clip.enable" if all_enabled => tl!("✓ Enable"),
-                    "clip.link" if linked => tl!("Unlink"),
-                    _ => crate::i18n::t(label),
-                };
-                let r = ui.add_enabled(!sel.is_empty() && app.session.is_enabled(cmd), egui::Button::new(label));
-                app.auto.add(&format!("timeline.clipMenu.{cmd}"), r.rect, label);
-                if r.clicked() {
-                    match crate::menus::invoke(app, &ctx, cmd, json!({})) {
-                        // Unlink (#220): the clips were selected together because they were linked;
-                        // keep only the one right-clicked, so it can be dragged away from the others
-                        Ok(v) if cmd == "clip.link" && v["linked"] == json!(false) => {
-                            if let Some(clip) = ctx.data(|d| d.get_temp::<ClipId>(menu_clip_id))
-                                && app.session.state.selection.contains(&clip)
-                            {
-                                let _ = app.session.execute("timeline.select", json!({"clips": [clip.0]}));
-                            }
+                            Ok(_) => {}
+                            Err(e) => app.ui.status = e,
                         }
-                        Ok(_) => {}
-                        Err(e) => app.ui.status = e,
+                        ui.close();
                     }
-                    ui.close();
                 }
             }
-        }
+        });
     });
 
     // ---- drops: project items and effects
