@@ -79,6 +79,11 @@ pub(crate) fn has_selection(s: &Session) -> std::result::Result<(), String> {
     has_seq(s)?;
     if s.state.selection.is_empty() { Err("no clips selected".into()) } else { Ok(()) }
 }
+/// Clips or captions selected (Copy / Cut work on either).
+fn has_clips_or_captions(s: &Session) -> std::result::Result<(), String> {
+    has_seq(s)?;
+    if s.state.selection.is_empty() && s.state.caption_selection.is_empty() { Err("no clips or captions selected".into()) } else { Ok(()) }
+}
 /// Clips or captions selected (Clear / Ripple Delete work on either).
 fn has_any_selection(s: &Session) -> std::result::Result<(), String> {
     has_seq(s)?;
@@ -107,6 +112,9 @@ fn can_undo(s: &Session) -> std::result::Result<(), String> {
 fn can_redo(s: &Session) -> std::result::Result<(), String> {
     if s.history.can_redo() { Ok(()) } else { Err("nothing to redo".into()) }
 }
+fn has_history(s: &Session) -> std::result::Result<(), String> {
+    if s.history.can_undo() || s.history.can_redo() { Ok(()) } else { Err("the history is empty".into()) }
+}
 fn has_in_out(s: &Session) -> std::result::Result<(), String> {
     let seq = s.active_sequence().ok_or("no sequence is open")?;
     if seq.mark_in.is_some() || seq.mark_out.is_some() { Ok(()) } else { Err("mark an In or Out point first".into()) }
@@ -120,7 +128,7 @@ pub(crate) fn has_project_selection(s: &Session) -> std::result::Result<(), Stri
 }
 fn has_clipboard(s: &Session) -> std::result::Result<(), String> {
     has_seq(s)?;
-    if s.state.clipboard.is_empty() { Err("clipboard is empty".into()) } else { Ok(()) }
+    if s.state.clipboard.is_empty() && s.state.caption_clipboard.is_empty() { Err("clipboard is empty".into()) } else { Ok(()) }
 }
 
 /// The ids a caller named under `many` (a list) or `one` (a single id), when the command documents
@@ -1521,18 +1529,27 @@ fn build() -> Vec<CommandSpec> {
             let all = bool_p(p, "all").unwrap_or(false);
             let id = str_p(p, "id").map(str::to_string);
             let Some(per) = s.persistence.as_mut() else { return Ok(json!({"discarded": 0})) };
-            let mut n = 0;
+            let mut n = 0usize;
             let mut keep = Vec::new();
+            let mut failure = None;
             for (i, c) in std::mem::take(&mut per.candidates).into_iter().enumerate() {
                 let hit = all || id.as_deref().map_or(i == 0, |want| want == c.id);
-                if hit {
-                    crate::autosave::discard_candidate(&c).map_err(|e| EngineError::Other(e.to_string()))?;
-                    n += 1;
+                if hit && failure.is_none() {
+                    match crate::autosave::discard_candidate(&c) {
+                        Ok(()) => n = n.saturating_add(1),
+                        Err(e) => {
+                            failure = Some(EngineError::Other(format!("could not discard recovery session {}: {e}", c.id)));
+                            keep.push(c);
+                        }
+                    }
                 } else {
                     keep.push(c);
                 }
             }
             per.candidates = keep;
+            if let Some(e) = failure {
+                return Err(e);
+            }
             if n == 0 {
                 return Err(bad("file.discardRecovery", "no such recovery session"));
             }
@@ -1615,7 +1632,16 @@ fn build() -> Vec<CommandSpec> {
         // ================= Edit =================
         cmd!("edit.undo", "Undo", ["Edit"], Some("Cmd+Z"), "{}", can_undo, |s, _| Ok(json!({"undone": s.undo()}))),
         cmd!("edit.redo", "Redo", ["Edit"], Some("Cmd+Shift+Z"), "{}", can_redo, |s, _| Ok(json!({"redone": s.redo()}))),
-        cmd!("edit.cut", "Cut", ["Edit"], Some("Cmd+X"), "{}", has_selection, |s, _| {
+        // the History panel menu; neither one changes the project or its unsaved state
+        cmd!("history.deleteRedoable", "Delete Redoable Actions", [], None, "{}", can_redo, |s, _| Ok(json!({"deleted": s.history.delete_redoable()}))),
+        cmd!("history.clear", "Clear History", [], None, "{}", has_history, |s, _| Ok(json!({"deleted": s.history.clear()}))),
+        cmd!("edit.cut", "Cut", ["Edit"], Some("Cmd+X"), "{}", has_clips_or_captions, |s, _| {
+            if s.state.selection.is_empty() {
+                crate::captions::copy(s);
+                let caps = s.state.caption_selection.clone();
+                crate::captions::delete(s, &caps, false)?;
+                return Ok(Value::Null);
+            }
             copy_selection(s);
             let sel = with_links(s, &s.state.selection.clone());
             s.edit_sequence("Cut", |q, _, st| {
@@ -1625,7 +1651,10 @@ fn build() -> Vec<CommandSpec> {
             })?;
             Ok(Value::Null)
         }),
-        cmd!("edit.copy", "Copy", ["Edit"], Some("Cmd+C"), "{}", has_selection, |s, _| {
+        cmd!("edit.copy", "Copy", ["Edit"], Some("Cmd+C"), "{}", has_clips_or_captions, |s, _| {
+            if s.state.selection.is_empty() {
+                return Ok(json!({"copied": crate::captions::copy(s)}));
+            }
             copy_selection(s);
             Ok(json!({"copied": s.state.clipboard.len()}))
         }),
@@ -2266,6 +2295,55 @@ fn build() -> Vec<CommandSpec> {
             crate::previews::delete(s, true)
         }),
         query!("sequence.renderBar", "Render Bar", "{}", |s, _| crate::previews::bar_json(s)),
+        // ================= Work area bar =================
+        cmd!("sequence.workAreaBar", "Work Area Bar", [], None, r#"{"show":bool?}"#, has_seq, |s, p| {
+            let shown = s.active_sequence().ok_or(EngineError::NoSequence)?.work_area.is_some();
+            let show = bool_p(p, "show").unwrap_or(!shown);
+            if show == shown {
+                return Ok(json!({"show": show}));
+            }
+            let fd = s.sequence_rate().frame_duration();
+            s.edit_sequence("Work Area Bar", |q, _, _| {
+                // shown again, the bar spans the whole sequence
+                q.work_area = show.then(|| TimeRange::from_bounds(Tick::ZERO, q.duration().max(fd)));
+                Ok(())
+            })?;
+            Ok(json!({"show": show}))
+        }),
+        cmd!(
+            "sequence.setWorkAreaIn",
+            "Set Work Area Bar In Point",
+            [],
+            None,
+            r#"{"time":ticks?,"frame":i64?,"seconds":f64?,"timecode":str?}"#,
+            has_seq,
+            |s, p| set_work_area_point(s, p, true)
+        ),
+        cmd!(
+            "sequence.setWorkAreaOut",
+            "Set Work Area Bar Out Point",
+            [],
+            None,
+            r#"{"time":ticks?,"frame":i64?,"seconds":f64?,"timecode":str?}"#,
+            has_seq,
+            |s, p| set_work_area_point(s, p, false)
+        ),
+        cmd!("sequence.setWorkArea", "Set Work Area", [], None, r#"{"start":ticks,"end":ticks}"#, has_seq, |s, p| {
+            const CMD: &str = "sequence.setWorkArea";
+            let tick = |key: &str| p.get(key).and_then(Value::as_i64).map(Tick).ok_or_else(|| bad(CMD, format!("need `{key}` (ticks)")));
+            let (start, end) = (tick("start")?, tick("end")?);
+            if start < Tick::ZERO {
+                return Err(bad(CMD, "`start` must not be negative"));
+            }
+            if end <= start {
+                return Err(bad(CMD, "`end` must be after `start`"));
+            }
+            s.edit_sequence("Set Work Area", |q, _, _| {
+                q.work_area = Some(TimeRange::from_bounds(start, end));
+                Ok(())
+            })?;
+            Ok(json!({"start": start.0, "end": end.0}))
+        }),
         cmd!("sequence.matchFrame", "Match Frame", ["Sequence"], Some("F"), "{}", has_seq, |s, _| {
             let t = s.playhead();
             let seq = s.active_sequence().ok_or(EngineError::NoSequence)?;
@@ -2860,10 +2938,17 @@ fn build() -> Vec<CommandSpec> {
             "Track Settings",
             [],
             None,
-            r#"{"track":"V1"|id,"locked":bool?,"syncLock":bool?,"enabled":bool?,"muted":bool?,"solo":bool?,"name":str?,"volumeDb":f64?,"pan":f64?}"#,
+            r#"{"track":"V1"|id,"locked":bool?,"syncLock":bool?,"enabled":bool?,"muted":bool?,"solo":bool?,"name":str?,"volumeDb":f64?,"pan":f64?,"label":"Violet|Iris|…"|""|null?}"#,
             has_seq,
             |s, p| {
                 let tr = track_p(s, p, "track", "timeline.setTrack")?.ok_or_else(|| bad("timeline.setTrack", "need `track`"))?;
+                // colour label: a label name, or "" / "None" / null for no colour
+                let label = match p.get("label") {
+                    None => None,
+                    Some(Value::Null) => Some(None),
+                    Some(Value::String(n)) if n.is_empty() || n.eq_ignore_ascii_case("none") => Some(None),
+                    Some(v) => Some(Some(v.as_str().and_then(Label::from_name).ok_or_else(|| bad("timeline.setTrack", format!("unknown label {v}")))?)),
+                };
                 let p = p.clone();
                 s.edit_sequence("Track Settings", |q, _, _| {
                     let t = q.track_mut(tr).ok_or(filmcraft_edit::EditError::NoTrack(tr))?;
@@ -2890,6 +2975,9 @@ fn build() -> Vec<CommandSpec> {
                     }
                     if let Some(v) = f64_p(&p, "pan") {
                         t.pan = v.clamp(-100.0, 100.0);
+                    }
+                    if let Some(l) = label {
+                        t.label = l;
                     }
                     Ok(())
                 })?;
@@ -3067,6 +3155,13 @@ fn build() -> Vec<CommandSpec> {
                     let (keyframes, v) = {
                         let prm = crate::masks::target_param(e, &pq, &pid).ok_or_else(|| bad("effects.setParam", format!("no param `{pid}`")))?;
                         let v = json_to_param(&prm.value, &val).ok_or_else(|| bad("effects.setParam", "value has the wrong type"))?;
+                        // the parameter's hard range, which `effects.list` publishes: a value outside it
+                        // (a factor where a percentage is meant, #2679) is refused, not saved
+                        if let (Some(filmcraft_project::ParamKind::Float { min, max, .. }), ParamValue::Float(x)) = (def.map(|d| &d.kind), &v)
+                            && !(*min..=*max).contains(x)
+                        {
+                            return Err(bad("effects.setParam", format!("`{pid}` must be between {min} and {max}, got {x}")));
+                        }
                         let keyframes = if keyframe {
                             // the stopwatch and the value in one step
                             prm.put_keyframe(mt, v.clone());
@@ -3111,6 +3206,14 @@ fn build() -> Vec<CommandSpec> {
                     _ => None,
                 }
                 .ok_or_else(|| bad("effects.toggleAnimation", "no such effect"))?;
+                // a parameter an older instance lacks (added to the effect later) starts from its
+                // default, as the UI shows it, without touching an existing one
+                if p.get("mask").is_none_or(Value::is_null)
+                    && !e.params.contains_key(&pid)
+                    && let Some(d) = e.def().and_then(|d| d.param(&pid))
+                {
+                    e.params.insert(pid.clone(), filmcraft_project::Param::new(d.default.clone()));
+                }
                 crate::masks::target_param(e, p, &pid).ok_or_else(|| bad("effects.toggleAnimation", "no such param"))?.toggle_animation(mt);
                 Ok(())
             })?;
@@ -3586,6 +3689,32 @@ fn mark(s: &mut Session, p: &Value, is_in: bool) -> Result<Value> {
     Ok(Value::Null)
 }
 
+/// Set Work Area Bar In / Out Point: the work area starts (`is_in`) or ends at `time`, else at the
+/// playhead. An In point at or after the end moves the end to the end of the sequence, or to one
+/// frame after the In point when the In point is at or past the end of the sequence; an Out point
+/// at or before the start moves the start to 0. With no work area yet, the other end is the end
+/// or the start of the sequence.
+fn set_work_area_point(s: &mut Session, p: &Value, is_in: bool) -> Result<Value> {
+    let cmd = if is_in { "sequence.setWorkAreaIn" } else { "sequence.setWorkAreaOut" };
+    let t = sequence_time_p(s, p, "", cmd)?.unwrap_or(s.playhead());
+    let fd = s.sequence_rate().frame_duration();
+    let seq = s.active_sequence().ok_or(EngineError::NoSequence)?;
+    let (start, end) = seq.work_area.map(|w| (w.start, w.end())).unwrap_or((Tick::ZERO, seq.duration()));
+    let (start, end) = if is_in {
+        (t, if end > t { end } else { seq.duration().max(t + fd) })
+    } else {
+        if t <= Tick::ZERO {
+            return Err(bad(cmd, "the Out point must be after the start of the sequence"));
+        }
+        (if start < t { start } else { Tick::ZERO }, t)
+    };
+    s.edit_sequence(if is_in { "Set Work Area Bar In Point" } else { "Set Work Area Bar Out Point" }, |q, _, _| {
+        q.work_area = Some(TimeRange::from_bounds(start, end));
+        Ok(())
+    })?;
+    Ok(json!({"start": start.0, "end": end.0}))
+}
+
 pub(crate) fn json_to_param(template: &ParamValue, v: &Value) -> Option<ParamValue> {
     Some(match template {
         ParamValue::Float(_) => ParamValue::Float(v.as_f64()?),
@@ -3636,9 +3765,13 @@ fn copy_selection(s: &mut Session) {
     }
     s.state.clipboard = clip;
     s.state.clipboard_markers = markers;
+    s.state.caption_clipboard.clear();
 }
 
 fn paste(s: &mut Session, insert: bool) -> Result<Value> {
+    if !s.state.caption_clipboard.is_empty() {
+        return crate::captions::paste(s, insert);
+    }
     let at = s.playhead();
     let clip = s.state.clipboard.clone();
     let markers = if s.state.copy_paste_sequence_markers { s.state.clipboard_markers.clone() } else { Vec::new() };
@@ -4259,6 +4392,7 @@ pub fn inspect_sequence(s: &Session, id: ItemId, q: &filmcraft_project::Sequence
     let tr = |t: &filmcraft_project::Track| {
         json!({
             "id": t.id.0, "name": t.name, "locked": t.locked, "syncLock": t.sync_lock, "enabled": t.enabled, "muted": t.muted, "solo": t.solo,
+            "label": t.label.map(|l| l.name()),
             "items": t.items.iter().map(|i| json!({
                 "clip": i.id.0, "item": i.item.0, "name": i.name, "start": i.start.0, "duration": i.duration.0,
                 "startFrame": rate.frame_at(i.start), "durationFrames": rate.frame_at(i.duration), "sourceIn": i.source_in.0, "speed": i.speed, "reverse": i.reverse,
