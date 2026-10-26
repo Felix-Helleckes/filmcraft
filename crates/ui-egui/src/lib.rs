@@ -2059,8 +2059,13 @@ impl FilmcraftApp {
 
     /// A stream the hardware decoder declined now decodes on the CPU, which can make 4K or
     /// high-bitrate video stutter: say so in the status bar, once per reason, with the reason
-    /// (on Windows, e.g. that the HEVC Video Extensions are not installed; #2751).
+    /// (on Windows, e.g. that the HEVC Video Extensions are not installed; #2751). Runs right
+    /// before the status bar is drawn, and waits while it shows another message (those clear
+    /// after a few seconds), so nothing replaces the notice before it is seen.
     pub(crate) fn tell_hw_declines(&mut self) {
+        if !self.ui.status.is_empty() {
+            return;
+        }
         let reasons = filmcraft_engine::perf::hw_declined_reasons();
         // every reason that came since the last pass, not only the newest
         if let Some(new) = reasons.get(self.hw_declines_told..).filter(|new| !new.is_empty()) {
@@ -2234,6 +2239,7 @@ impl FilmcraftApp {
         if !self.ui.show_status_bar {
             return;
         }
+        self.tell_hw_declines();
         // Status / hint bar
         let sb = egui::Rect::from_min_max(egui::pos2(full.min.x, full.max.y - status_h), full.max);
         ui.painter().rect_filled(sb, 0.0, t.header_bg);
@@ -2526,7 +2532,6 @@ impl FilmcraftApp {
         if ctx.input(|i| i.viewport().close_requested()) && panels::clip_dialogs::intercept_quit(self) {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
         }
-        self.tell_hw_declines();
         let had_synthetic = !self.synthetic.is_empty() || self.synthetic_pending_step.is_some();
         self.drain_control(ctx);
         if (!self.synthetic.is_empty() || self.synthetic_pending_step.is_some()) && !had_synthetic {

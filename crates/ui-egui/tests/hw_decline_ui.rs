@@ -23,6 +23,7 @@ fn a_declined_hardware_decoder_is_told_once_with_its_reason() {
     for _ in 0..3 {
         step(&mut h);
     }
+    h.state_mut().ui.status.clear();
     let reason = "HEVC video: no HEVC decoder MFT (the HEVC Video Extensions are not installed)";
     filmcraft_codecs::hw::note_hw_declined_because(reason);
     step(&mut h);
@@ -44,6 +45,16 @@ fn a_declined_hardware_decoder_is_told_once_with_its_reason() {
     step(&mut h);
     let status = h.state().ui.status.clone();
     assert!(status.contains(a) && status.contains(b), "{status}");
+    // a message already in the status bar is not replaced: the notice waits for it (#2754 review)
+    h.state_mut().ui.status = "Saved".to_owned();
+    let c = "H.264 video: the decoder MFT refused the stream";
+    filmcraft_codecs::hw::note_hw_declined_because(c);
+    step(&mut h);
+    assert_eq!(h.state().ui.status, "Saved");
+    h.state_mut().ui.status.clear();
+    step(&mut h);
+    let status = h.state().ui.status.clone();
+    assert!(status.contains(c), "{status}");
     // and agents can read it
     let stats = h.state_mut().session.execute("perf.stats", json!({})).unwrap();
     let reasons = stats["decode"]["hardware"]["declinedReasons"].as_array().cloned().unwrap_or_default();
