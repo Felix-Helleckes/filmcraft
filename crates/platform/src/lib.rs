@@ -263,10 +263,14 @@ pub fn nvdec_factory(entry: &filmcraft_isobmff::SampleEntry) -> Option<filmcraft
     match nvdec::NvDecoder::new(info.clone()) {
         Ok(nv) => Some(Ok(Box::new(HybridDecoder::new(Box::new(nv), entry.clone(), info)))),
         Err(why) => {
-            log::info!("NVDEC declined {} video: {why}", entry.codec.name());
+            let reason = format!("{} video: {why}", entry.codec.name());
             // with VA-API behind this factory, that one counts the decline (or takes the stream)
-            if !filmcraft_codecs::video_decoder_registered(vaapi_factory) {
-                filmcraft_codecs::hw::note_hw_declined_because(&format!("{} video: {why}", entry.codec.name()));
+            if filmcraft_codecs::video_decoder_registered(vaapi_factory) {
+                log::info!("NVDEC declined {reason}");
+            } else {
+                // the last hardware decoder for it: a warning, as the stream now decodes on the CPU (#2751)
+                log::warn!("hardware decoding declined for {reason}");
+                filmcraft_codecs::hw::note_hw_declined_because(&reason);
             }
             None
         }
