@@ -15,6 +15,16 @@ fn step(h: &mut Harness<'static, FilmcraftApp>) {
     h.step();
 }
 
+/// Queue a left click on the status bar (the bottom 20 px of the 1600×980 window) for the next frame.
+fn click_status_bar(h: &mut Harness<'static, FilmcraftApp>) {
+    let pos = egui::pos2(400.0, 970.0);
+    let events = &mut h.input_mut().events;
+    events.push(egui::Event::PointerMoved(pos));
+    for pressed in [true, false] {
+        events.push(egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE });
+    }
+}
+
 #[test]
 fn a_declined_hardware_decoder_is_told_once_with_its_reason() {
     let mut s = Session::default();
@@ -55,6 +65,13 @@ fn a_declined_hardware_decoder_is_told_once_with_its_reason() {
     step(&mut h);
     let status = h.state().ui.status.clone();
     assert!(status.contains(c), "{status}");
+    // a click on the status bar in the same frame dismisses the old message, not the new notice
+    let d = "VC-1 video: the decoder MFT refused the stream";
+    filmcraft_codecs::hw::note_hw_declined_because(d);
+    click_status_bar(&mut h);
+    step(&mut h);
+    let status = h.state().ui.status.clone();
+    assert!(status.contains(d) && !status.contains(c), "{status}");
     // and agents can read it
     let stats = h.state_mut().session.execute("perf.stats", json!({})).unwrap();
     let reasons = stats["decode"]["hardware"]["declinedReasons"].as_array().cloned().unwrap_or_default();

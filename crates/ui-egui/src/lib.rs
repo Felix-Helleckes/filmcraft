@@ -2239,9 +2239,13 @@ impl FilmcraftApp {
         if !self.ui.show_status_bar {
             return;
         }
-        self.tell_hw_declines();
         // Status / hint bar
         let sb = egui::Rect::from_min_max(egui::pos2(full.min.x, full.max.y - status_h), full.max);
+        // a click dismisses the message shown so far, not a decline notice placed this frame
+        if ui.interact(sb, egui::Id::unique("status-bar"), egui::Sense::click()).clicked() {
+            self.ui.status.clear();
+        }
+        self.tell_hw_declines();
         ui.painter().rect_filled(sb, 0.0, t.header_bg);
         let now = ui.input(|i| i.time);
         if self.ui.status != self.status_seen.0 {
@@ -2255,10 +2259,6 @@ impl FilmcraftApp {
         }
         let hint = if !self.ui.status.is_empty() { self.ui.status.clone() } else { self.hint_text() };
         ui.painter().text(egui::pos2(sb.min.x + 10.0, sb.center().y), egui::Align2::LEFT_CENTER, hint, Tokens::ui(11.0), t.text_dim);
-        let resp = ui.interact(sb, egui::Id::unique("status-bar"), egui::Sense::click());
-        if resp.clicked() {
-            self.ui.status.clear();
-        }
         self.job_status(ui, sb, &t);
     }
 
