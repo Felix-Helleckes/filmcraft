@@ -430,15 +430,71 @@ enum AudioWriter {
 
 /// An export's output file: on disk, or in memory for an [`OutputSink`].
 enum Out {
-    File(std::io::BufWriter<std::fs::File>),
+    File(PartFile),
     Mem(std::io::Cursor<Vec<u8>>),
+}
+
+/// An output file on disk. A new file is written as `<path>.part` and renamed over `path` only
+/// when it is finished, so a failed or cancelled export leaves a file that was at `path` as it
+/// was (#2793); dropped unfinished, it removes the `.part`. A file reserved by the caller
+/// ([`ExportSettings::output_file`]) is written in place.
+struct PartFile {
+    /// `None` once finished.
+    w: Option<std::io::BufWriter<std::fs::File>>,
+    /// The `.part` file to rename over the output (`None` for a reserved file).
+    part: Option<std::path::PathBuf>,
+}
+
+impl PartFile {
+    fn reserved(file: std::fs::File) -> PartFile {
+        PartFile { w: Some(std::io::BufWriter::new(file)), part: None }
+    }
+
+    fn create(path: &str) -> Result<PartFile> {
+        let part = part_path(path);
+        let f = std::fs::File::create(&part).map_err(|e| ExportError::Io(format!("{path}: {e}")))?;
+        Ok(PartFile { w: Some(std::io::BufWriter::new(f)), part: Some(part) })
+    }
+
+    fn writer(&mut self) -> std::io::Result<&mut std::io::BufWriter<std::fs::File>> {
+        self.w.as_mut().ok_or_else(|| std::io::Error::other("the output file is already finished"))
+    }
+
+    /// Flush, close and (for a new file) rename it over `path`.
+    fn finish(&mut self, path: &str) -> Result<()> {
+        let mut w = self.w.take().ok_or_else(|| ExportError::Io(format!("{path}: the output file is already finished")))?;
+        w.flush().map_err(|e| ExportError::Io(e.to_string()))?;
+        drop(w);
+        if let Some(part) = self.part.take()
+            && let Err(e) = std::fs::rename(&part, path)
+        {
+            let _ = std::fs::remove_file(&part);
+            return Err(ExportError::Io(format!("{path}: {e}")));
+        }
+        Ok(())
+    }
+}
+
+impl Drop for PartFile {
+    fn drop(&mut self) {
+        // close before removing: Windows can't delete an open file
+        drop(self.w.take());
+        if let Some(part) = self.part.take() {
+            let _ = std::fs::remove_file(part);
+        }
+    }
+}
+
+/// Where the output `path` is written until it is finished.
+fn part_path(path: &str) -> std::path::PathBuf {
+    std::path::PathBuf::from(format!("{path}.part"))
 }
 
 impl Out {
     fn create(settings: &ExportSettings) -> Result<Out> {
         if let Some(file) = &settings.output_file {
             let file = file.try_clone().map_err(|e| ExportError::Io(e.to_string()))?;
-            return Ok(Out::File(std::io::BufWriter::new(file)));
+            return Ok(Out::File(PartFile::reserved(file)));
         }
         Out::create_path(settings, &settings.path)
     }
@@ -452,10 +508,9 @@ impl Out {
             && let Some(file) = &settings.output_file
         {
             let file = file.try_clone().map_err(|e| ExportError::Io(e.to_string()))?;
-            return Ok(Out::File(std::io::BufWriter::new(file)));
+            return Ok(Out::File(PartFile::reserved(file)));
         }
-        let f = std::fs::File::create(path).map_err(|e| ExportError::Io(format!("{path}: {e}")))?;
-        Ok(Out::File(std::io::BufWriter::new(f)))
+        Ok(Out::File(PartFile::create(path)?))
     }
 
     /// Flush (and hand in-memory output to the sink); returns the file size.
@@ -465,8 +520,8 @@ impl Out {
 
     fn finish_path(self, settings: &ExportSettings, path: &str) -> Result<u64> {
         match self {
-            Out::File(mut w) => {
-                w.flush().map_err(|e| ExportError::Io(e.to_string()))?;
+            Out::File(mut f) => {
+                f.finish(path)?;
                 Ok(std::fs::metadata(path).map(|m| m.len()).unwrap_or(0))
             }
             Out::Mem(c) => write_output(settings, path, c.into_inner()),
@@ -479,7 +534,13 @@ fn write_output(settings: &ExportSettings, path: &str, data: Vec<u8>) -> Result<
     let n = data.len() as u64;
     match &settings.sink {
         Some(sink) => (sink.0)(path, data),
-        None => std::fs::write(path, &data),
+        // like `PartFile`: an existing file is replaced only by a complete one
+        None => {
+            let part = part_path(path);
+            std::fs::write(&part, &data).and_then(|()| std::fs::rename(&part, path)).inspect_err(|_| {
+                let _ = std::fs::remove_file(&part);
+            })
+        }
     }
     .map_err(|e| ExportError::Io(e.to_string()))?;
     Ok(n)
@@ -488,13 +549,13 @@ fn write_output(settings: &ExportSettings, path: &str, data: Vec<u8>) -> Result<
 impl Write for Out {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         match self {
-            Out::File(w) => w.write(buf),
+            Out::File(f) => f.writer()?.write(buf),
             Out::Mem(w) => w.write(buf),
         }
     }
     fn flush(&mut self) -> std::io::Result<()> {
         match self {
-            Out::File(w) => w.flush(),
+            Out::File(f) => f.writer()?.flush(),
             Out::Mem(w) => w.flush(),
         }
     }
@@ -503,7 +564,7 @@ impl Write for Out {
 impl std::io::Seek for Out {
     fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
         match self {
-            Out::File(w) => w.seek(pos),
+            Out::File(f) => f.writer()?.seek(pos),
             Out::Mem(w) => w.seek(pos),
         }
     }
@@ -2029,3 +2090,39 @@ mod determinism_tests;
 
 #[cfg(test)]
 mod hdr_tests;
+
+/// #2793: an output replaces a file at its path only when it is finished.
+#[cfg(test)]
+mod part_file_tests {
+    use std::io::Write;
+
+    use super::{ExportSettings, Out, part_path, write_output};
+
+    #[test]
+    fn an_unfinished_output_leaves_the_previous_file_and_a_finished_one_replaces_it() {
+        let dir = std::env::temp_dir().join(format!("filmcraft-part-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("out.mov").to_string_lossy().into_owned();
+        std::fs::write(&path, b"previous").unwrap();
+        let settings = ExportSettings { path: path.clone(), ..Default::default() };
+        // a failed or cancelled export drops its output unfinished
+        let mut out = Out::create(&settings).unwrap();
+        out.write_all(b"half an export").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"previous", "nothing is truncated while writing");
+        drop(out);
+        assert_eq!(std::fs::read(&path).unwrap(), b"previous");
+        assert!(!part_path(&path).exists(), "the partial file is removed");
+        // a finished one takes the path
+        let mut out = Out::create(&settings).unwrap();
+        out.write_all(b"the export").unwrap();
+        assert_eq!(out.finish(&settings).unwrap(), 10);
+        assert_eq!(std::fs::read(&path).unwrap(), b"the export");
+        assert!(!part_path(&path).exists());
+        // whole files written at once (image sequences, in-memory containers) too
+        assert_eq!(write_output(&settings, &path, b"frame".to_vec()).unwrap(), 5);
+        assert_eq!(std::fs::read(&path).unwrap(), b"frame");
+        let missing = dir.join("no such folder").join("x.png").to_string_lossy().into_owned();
+        assert!(write_output(&settings, &missing, b"frame".to_vec()).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

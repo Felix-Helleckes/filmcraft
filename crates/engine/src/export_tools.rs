@@ -463,11 +463,41 @@ fn write_sidecar(s: &Session, project: &Project, seq: ItemId, settings: &ExportS
     Ok(Some(path))
 }
 
+/// The project's media or proxy file that an export to `path` would replace, if any: the finished
+/// export is renamed over its output, so exporting to a clip's own file would replace the footage
+/// the project uses (#2793). Compared by file identity, so any spelling of the path (a link, other
+/// letter case on macOS and Windows) is caught.
+pub fn overwritten_media(s: &Session, project: &Project, path: &str) -> Option<String> {
+    let out = std::fs::metadata(path).ok()?;
+    let refs = project.items.values().filter_map(|i| i.as_media()).flat_map(|m| [Some(&m.media), m.proxy.as_ref()]).flatten();
+    refs.filter_map(|r| match r {
+        filmcraft_project::MediaRef::File { path } => s.media.follow(path).ok(),
+        filmcraft_project::MediaRef::Generator(_) => None,
+    })
+    .find(|media| same_file(&out, path, media))
+}
+
+#[cfg(unix)]
+fn same_file(out: &std::fs::Metadata, _: &str, other: &str) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    std::fs::metadata(other).is_ok_and(|m| m.dev() == out.dev() && m.ino() == out.ino())
+}
+
+#[cfg(not(unix))]
+fn same_file(_: &std::fs::Metadata, out: &str, other: &str) -> bool {
+    matches!((std::fs::canonicalize(out), std::fs::canonicalize(other)), (Ok(a), Ok(b)) if a == b)
+}
+
 /// Run an export of `seq` in `project` as a background job (or now, with `wait`); returns the job id.
 pub fn spawn_export(s: &mut Session, project: Arc<Project>, seq: ItemId, mut settings: ExportSettings, label: String, wait: bool) -> Result<u64> {
     let format = settings.format;
     if !filmcraft_export::available(format) {
         return Err(EngineError::Other(format!("{} export is not available (no encoder registered)", format.label())));
+    }
+    if !s.services.export_in_memory()
+        && let Some(media) = overwritten_media(s, &project, &settings.path)
+    {
+        return Err(EngineError::Other(format!("{media} is media this project uses; export to another file name so the footage is not replaced")));
     }
     if s.services.export_in_memory() {
         let services = s.services.clone();

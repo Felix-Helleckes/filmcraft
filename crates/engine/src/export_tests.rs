@@ -862,3 +862,28 @@ fn caption_sidecars_keep_only_the_exported_interval() {
         assert!(doc.cues.is_empty(), "half-open export excludes cues touching either boundary: {doc:?}");
     }
 }
+
+/// #2793: exporting to the file of a clip the project uses (under any spelling of its path) is
+/// refused and leaves the footage as it was.
+#[test]
+fn an_export_over_the_projects_own_media_is_refused() {
+    let dir = Scratch::new("own-media");
+    let clip = std::path::PathBuf::from(dir.path("clip.mov"));
+    crate::media_test_util::make_movie(&clip, filmcraft_media::DemoScene::Plasma, 64, 36, 6);
+    let before = std::fs::read(&clip).unwrap();
+    let (mut s, _, _) = crate::media_test_util::session_with(&[&clip]);
+    let mut paths = vec![clip.to_string_lossy().into_owned()];
+    #[cfg(unix)]
+    {
+        let link = dir.path("link.mov");
+        std::os::unix::fs::symlink(&clip, &link).unwrap();
+        paths.push(link);
+    }
+    for path in paths {
+        let e = s.execute("file.exportMedia", json!({"path": path, "format": "prores", "wait": true})).unwrap_err().to_string();
+        assert!(e.contains("media this project uses"), "{path}: {e}");
+        assert_eq!(std::fs::read(&clip).unwrap(), before, "{path}");
+    }
+    // another name is fine
+    s.execute("file.exportMedia", json!({"path": dir.path("other.mov"), "format": "prores", "wait": true})).unwrap();
+}
