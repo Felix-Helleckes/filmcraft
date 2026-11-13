@@ -182,6 +182,11 @@ pub fn invoke(app: &mut FilmcraftApp, ctx: &egui::Context, id: &str, mut params:
     if id == "edit.selectAll" && (crate::panels::graphics::select_all_edited_text(app) || crate::panels::effect_controls::select_all_keyframes(app)) {
         return Ok(Value::Null);
     }
+    if params.as_object().is_none_or(|m| m.is_empty())
+        && let Some(r) = crate::panels::effect_controls::copy_paste_keyframes(app, id)
+    {
+        return r;
+    }
     if filmcraft_engine::source_monitor::source_command(id) && targets_source(app, &params) && params.get("target").is_none() {
         let object = params.as_object_mut().ok_or("command parameters must be an object")?;
         object.insert("target".into(), json!("source"));
@@ -715,6 +720,10 @@ pub fn menu_items(app: &FilmcraftApp) -> Vec<MenuItem> {
         if it.id.starts_with("view.") {
             it.checked = crate::panels::monitor_view::checked(app, &it.id).or(crate::panels::menu_dialogs::checked(app, &it.id));
             it.enabled &= crate::panels::monitor_view::enabled(app, &it.id);
+        }
+        // keyframes are copied and pasted with Effect Controls focused (#2582)
+        if crate::panels::effect_controls::copy_paste_keyframes_enabled(app, &it.id) {
+            it.enabled = true;
         }
     }
     crate::panels::workspaces::menu(app, &mut v);

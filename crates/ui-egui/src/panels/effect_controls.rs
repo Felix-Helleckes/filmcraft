@@ -90,6 +90,40 @@ pub(crate) fn select_all_keyframes(app: &mut FilmcraftApp) -> bool {
     true
 }
 
+/// Whether Edit ▸ Copy / Paste act on keyframes: Effect Controls is focused and has keyframes
+/// selected (Copy) or keyframes were copied (Paste).
+pub(crate) fn copy_paste_keyframes_enabled(app: &FilmcraftApp, id: &str) -> bool {
+    app.ui.focused == crate::dock::PanelKind::EffectControls
+        && match id {
+            "edit.copy" => !app.ui.keyframe_selection.is_empty(),
+            "edit.paste" => !app.session.state.keyframe_clipboard.is_empty() && !selected_clips(app).is_empty(),
+            _ => false,
+        }
+}
+
+/// Edit ▸ Copy with Effect Controls focused copies the selected keyframes instead of the Timeline's
+/// clips, and Edit ▸ Paste puts copied keyframes on the clip the panel shows, from the playhead,
+/// and selects them (#2582). `None` when the command is not about keyframes.
+pub(crate) fn copy_paste_keyframes(app: &mut FilmcraftApp, id: &str) -> Option<Result<Value, String>> {
+    if !copy_paste_keyframes_enabled(app, id) {
+        return None;
+    }
+    let r = if id == "edit.copy" {
+        app.session.execute("effects.copyKeyframes", json!({"keyframes": app.ui.keyframe_selection}))
+    } else {
+        let clips: Vec<u64> = selected_clips(app).iter().map(|(c, ..)| c.0).collect();
+        app.session.execute("effects.pasteKeyframes", json!({"clips": clips})).inspect(|v| {
+            if let Ok(keys) = serde_json::from_value(v["keyframes"].clone()) {
+                app.ui.keyframe_selection = keys;
+            }
+        })
+    };
+    Some(r.map_err(|e| {
+        app.ui.status = e.to_string();
+        e.to_string()
+    }))
+}
+
 fn selected_clip(app: &FilmcraftApp) -> Option<(ClipId, TrackItem, TrackKind)> {
     selected_clips(app).into_iter().next()
 }

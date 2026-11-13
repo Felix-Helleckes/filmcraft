@@ -3299,6 +3299,16 @@ fn build() -> Vec<CommandSpec> {
             crate::keyframe_move::move_many
         ),
         cmd!(
+            "effects.copyKeyframes",
+            "Copy Keyframes",
+            [],
+            None,
+            r#"{"keyframes":[{"clip":id,"effect":index,"param":str,"mask":n?,"time":mediaTicks}]}"#,
+            has_seq,
+            crate::keyframe_clipboard::copy
+        ),
+        cmd!("effects.pasteKeyframes", "Paste Keyframes", [], None, r#"{"clips":[id]?}"#, has_seq, crate::keyframe_clipboard::paste),
+        cmd!(
             "effects.setInterpolation",
             "Keyframe Interpolation",
             [],

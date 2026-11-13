@@ -727,3 +727,44 @@ fn a_line_separates_added_effects_from_the_fixed_ones() {
     );
     assert!(tint[1] > blur[1], "one line, above all the added effects");
 }
+
+/// #2582: with Effect Controls focused, ⌘C copies the selected keyframes (not the Timeline's
+/// clips) and ⌘V puts them on the clip the panel shows from the playhead, keeping their spacing,
+/// selected, as one undo step; Edit ▸ Paste is enabled for them.
+#[test]
+fn copied_keyframes_paste_onto_another_clip_at_the_playhead() {
+    let (mut d, clip) = Driver::demo();
+    let keys = lane_keys(&mut d, &clip, &[("scale", 1.0), ("scale", 2.0), ("rotation", 1.5)]);
+    select_keys(&mut d, &keys);
+    d.ok("ui.set", json!({"focused": "EffectControls"}));
+    d.ok("ui.key", json!({"key": "Cmd+C"}));
+    d.frames(2);
+    assert_eq!(d.harness.state().session.state.keyframe_clipboard.len(), 3);
+    assert!(d.harness.state().session.state.clipboard.is_empty(), "no clips were copied");
+    // the next clip, with the playhead half a second into it
+    let seq = d.exec("sequence.inspect", json!({}));
+    let next = &seq["video"][0]["items"][1];
+    let (other, start) = (next["clip"].as_u64().unwrap(), next["start"].as_i64().unwrap());
+    d.exec("timeline.select", json!({"clips": [other]}));
+    let at = start + Tick::from_seconds_f64(0.5).0;
+    let at = d.exec("playhead.set", json!({"time": at}))["time"].as_i64().unwrap();
+    d.ok("ui.set", json!({"focused": "EffectControls"}));
+    d.frames(3);
+    let paste = filmcraft_ui_egui::menus::menu_items(d.harness.state()).into_iter().find(|m| m.id == "edit.paste").unwrap();
+    assert!(paste.enabled, "Edit ▸ Paste is enabled for copied keyframes");
+    let undo = d.harness.state().session.history.undo.len();
+    d.ok("ui.key", json!({"key": "Cmd+V"}));
+    d.frames(3);
+    let session = &d.harness.state().session;
+    assert_eq!(session.history.undo.len(), undo + 1);
+    let it = session.active_sequence().unwrap().find_item(ClipId(other)).unwrap().1;
+    let motion = it.effects.iter().find(|e| e.effect == "motion").unwrap();
+    let scale: Vec<i64> = motion.params["scale"].keyframes.iter().map(|k| (k.time - it.source_in).0 + it.start.0).collect();
+    assert_eq!(scale.len(), 2, "{scale:?}");
+    assert!((scale[0] - at).abs() <= 1, "the first key lands on the playhead");
+    assert!(((scale[1] - scale[0]) - (keys[1].time - keys[0].time).0).abs() <= 1, "spacing kept");
+    assert_eq!(motion.params["rotation"].keyframes.len(), 1);
+    let selected = &d.harness.state().ui.keyframe_selection;
+    assert_eq!(selected.len(), 3);
+    assert!(selected.iter().all(|k| k.clip == other), "the pasted keys are selected");
+}

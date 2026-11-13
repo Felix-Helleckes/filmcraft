@@ -24,6 +24,7 @@ pub mod graphic_templates;
 pub mod graphics;
 pub mod interchange;
 pub mod keyboard;
+pub mod keyframe_clipboard;
 mod keyframe_move;
 mod marker_export;
 pub mod masks;
@@ -397,6 +398,9 @@ pub struct EditorState {
     /// Sequence markers copied with the clipboard clips (start relative to the copied range).
     #[serde(skip)]
     pub clipboard_markers: Vec<filmcraft_project::Marker>,
+    /// Keyframes copied in Effect Controls (`effects.copyKeyframes`, #2582).
+    #[serde(skip)]
+    pub keyframe_clipboard: Vec<keyframe_clipboard::CopiedKeyframe>,
     /// Captions copied from the Timeline, with their caption track's index (starts relative to the
     /// copied range). Copying clips empties it and copying captions empties `clipboard`, so Paste
     /// places whichever was copied last.
