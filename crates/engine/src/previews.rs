@@ -572,6 +572,25 @@ fn is_hash(s: &str) -> bool {
     s.len() == 32 && s.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
+/// Whether `name` is a render preview file (`<hash>.mov`, `<hash>-<off>-<len>.mov`, `<hash>.wav`),
+/// or one a render left half-written (`.part`): the only files FilmCraft writes into the media
+/// cache, so the only ones its cleanup may delete (#2772).
+pub fn is_preview_file(name: &str) -> bool {
+    let name = name.strip_suffix(".part").unwrap_or(name);
+    parse_video_name(name).is_some() || name.strip_suffix(".wav").is_some_and(is_hash)
+}
+
+/// Whether `name` is the folder of an unsaved project's previews (`untitled-<pid>-<time>`).
+pub fn is_untitled_dir(name: &str) -> bool {
+    name.strip_prefix("untitled-").is_some_and(|rest| {
+        let mut it = rest.split('-');
+        let (pid, time) = (it.next(), it.next());
+        it.next().is_none()
+            && pid.is_some_and(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
+            && time.is_some_and(|t| !t.is_empty() && t.bytes().all(|b| b.is_ascii_alphanumeric()))
+    })
+}
+
 fn default_temp_dir() -> Option<PathBuf> {
     if cfg!(target_arch = "wasm32") {
         return None;

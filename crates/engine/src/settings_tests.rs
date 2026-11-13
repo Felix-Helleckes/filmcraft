@@ -430,6 +430,58 @@ fn recent_projects_are_remembered() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// #2772: a media cache location can be any folder (a footage folder, the home folder); its
+/// cleanup deletes only the render previews FilmCraft wrote there, whatever their age or the policy.
+#[test]
+fn media_cache_cleanup_never_deletes_files_filmcraft_did_not_write() {
+    let dir = tmp_dir("prefs-cache-foreign");
+    let mut s = Session::default();
+    s.start_autosave(crate::autosave::AutosaveConfig::new(dir.join("data"))).unwrap();
+    let custom = dir.join("Footage");
+    let stale = custom.join("Previews").join("untitled-1-old");
+    std::fs::create_dir_all(&stale).unwrap();
+    let preview = stale.join("0123456789abcdef0123456789abcdef.mov");
+    let users = [
+        custom.join("keep.txt"),
+        custom.join("A001.mov"),
+        custom.join("Day 1").join("B002.mov"),
+        custom.join("Previews").join("notes.txt"),
+        custom.join("Previews").join("0123456789abcdef0123456789abcdef.mov"),
+        custom.join("Previews").join("Cut").join("0123456789abcdef0123456789abcdef.wav"),
+        stale.join("holiday.mov"),
+    ];
+    for f in users.iter().chain([&preview]) {
+        std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+        std::fs::write(f, vec![0u8; 100]).unwrap();
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(400 * 86_400);
+        std::fs::File::options().write(true).open(f).unwrap().set_modified(old).unwrap();
+    }
+    // a link into another folder of the user's is not followed
+    #[cfg(unix)]
+    {
+        let elsewhere = dir.join("Elsewhere").join("untitled-2-x");
+        std::fs::create_dir_all(&elsewhere).unwrap();
+        std::fs::write(elsewhere.join("fedcba9876543210fedcba9876543210.mov"), b"x").unwrap();
+        std::os::unix::fs::symlink(&elsewhere, custom.join("Previews").join("untitled-3-y")).unwrap();
+    }
+    set(&mut s, "mediaCache.location", json!(custom.to_string_lossy()));
+    let info = s.execute("mediaCache.info", json!({})).unwrap();
+    assert_eq!(info["files"], 1, "only the preview counts: {info}");
+    for management in ["olderThan", "exceedsSize"] {
+        let p = settings::MediaCachePrefs { management: management.into(), older_than_days: 0, max_size_gb: 0, ..Default::default() };
+        settings::enforce_policy(&custom, &p, None, std::time::SystemTime::now());
+    }
+    assert!(!preview.exists(), "FilmCraft's own preview is cleaned");
+    s.execute("mediaCache.clean", json!({"all": true})).unwrap();
+    for f in &users {
+        assert!(f.exists(), "{} was deleted", f.display());
+    }
+    #[cfg(unix)]
+    assert!(dir.join("Elsewhere").join("untitled-2-x").join("fedcba9876543210fedcba9876543210.mov").exists());
+    s.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn media_cache_location_policy_and_clean() {
     let dir = tmp_dir("prefs-cache");

@@ -1618,22 +1618,33 @@ pub fn previews_root(cache: &Path) -> PathBuf {
     cache.join("Previews")
 }
 
-/// Files under `dir` (recursively): (path, bytes, modified).
+/// The files FilmCraft wrote into the media cache `dir`: render previews in the unsaved projects'
+/// folders under `Previews` (path, bytes, modified). Anything else there is the user's: the
+/// location can be any folder, so cleaning it must never take files FilmCraft didn't write
+/// (#2772). Symbolic links are not followed.
 fn cache_files(dir: &Path) -> Vec<(PathBuf, u64, std::time::SystemTime)> {
     let mut out = Vec::new();
-    let mut stack = vec![dir.to_path_buf()];
-    while let Some(d) = stack.pop() {
+    for d in preview_dirs(dir) {
         let Ok(rd) = std::fs::read_dir(&d) else { continue };
         for e in rd.flatten() {
-            let Ok(md) = e.metadata() else { continue };
-            if md.is_dir() {
-                stack.push(e.path());
-            } else {
-                out.push((e.path(), md.len(), md.modified().unwrap_or(std::time::UNIX_EPOCH)));
+            if !e.file_type().is_ok_and(|t| t.is_file()) || !e.file_name().to_str().is_some_and(crate::previews::is_preview_file) {
+                continue;
             }
+            let Ok(md) = e.metadata() else { continue };
+            out.push((e.path(), md.len(), md.modified().unwrap_or(std::time::UNIX_EPOCH)));
         }
     }
     out
+}
+
+/// The unsaved projects' preview folders (`Previews/untitled-…`) in the media cache `dir`; real
+/// folders only, not links.
+fn preview_dirs(dir: &Path) -> Vec<PathBuf> {
+    let Ok(rd) = std::fs::read_dir(previews_root(dir)) else { return Vec::new() };
+    rd.flatten()
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()) && e.file_name().to_str().is_some_and(crate::previews::is_untitled_dir))
+        .map(|e| e.path())
+        .collect()
 }
 
 /// Size and file count of the media cache.
@@ -1657,15 +1668,11 @@ fn remove_files(files: &[(PathBuf, u64, std::time::SystemTime)], keep: Option<&P
     n
 }
 
+/// Remove the preview folders left empty (`remove_dir` refuses a folder that isn't).
 fn prune_empty_dirs(dir: &Path, keep: Option<&Path>) {
-    let Ok(rd) = std::fs::read_dir(dir) else { return };
-    for e in rd.flatten() {
-        let p = e.path();
-        if p.is_dir() && keep.is_none_or(|k| !k.starts_with(&p)) {
-            prune_empty_dirs(&p, keep);
-            let _ = std::fs::remove_dir(&p);
-        } else if p.is_dir() {
-            prune_empty_dirs(&p, keep);
+    for d in preview_dirs(dir) {
+        if keep.is_none_or(|k| !k.starts_with(&d)) {
+            let _ = std::fs::remove_dir(&d);
         }
     }
 }
@@ -1703,7 +1710,7 @@ pub fn enforce_policy(dir: &Path, prefs: &MediaCachePrefs, keep: Option<&Path>, 
     removed
 }
 
-/// Delete everything in the media cache except `keep` ("Delete…" ▸ unused files).
+/// Delete the media cache's files except `keep` ("Delete…" ▸ unused files).
 pub fn clean(dir: &Path, keep: Option<&Path>) -> (usize, u64) {
     let files = cache_files(dir);
     let r = remove_files(&files, keep);
