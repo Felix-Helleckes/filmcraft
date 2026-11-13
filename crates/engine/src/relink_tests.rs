@@ -163,6 +163,39 @@ fn make_offline_shows_the_slate_until_relinked() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// #2782: Make Offline ▸ delete media files deletes the file an item was imported from, and keeps
+/// a file the item's path names that isn't it (another file put in its place, a document a hostile
+/// project points at).
+#[test]
+fn make_offline_deletes_only_the_items_own_media_files() {
+    let root = tmp_dir("relink-delete");
+    let (path, items) = saved_project(&root);
+    let a = root.join("Media/a.mov");
+    let b = root.join("Media/b.mov");
+    // b.mov is replaced by a document of the user's after import
+    std::fs::write(&b, b"my notes").unwrap();
+    let mut s = open(&path);
+    let r = s.execute("media.makeOffline", json!({"items": [items[0].0, items[1].0], "deleteFiles": true})).unwrap();
+    assert!(!a.exists(), "the imported file is deleted: {r}");
+    assert_eq!(std::fs::read(&b).unwrap(), b"my notes", "{r}");
+    assert_eq!(r["deleted"].as_array().map(Vec::len), Some(1), "{r}");
+    assert!(r["kept"][0]["reason"].as_str().unwrap().contains("not the file"), "{r}");
+    // an item with no recorded identity (an older or hand-made project) pointing at a document
+    let notes = root.join("notes.txt");
+    std::fs::write(&notes, b"keep me").unwrap();
+    let mut p = (*s.project).clone();
+    if let Some(m) = p.item_mut(items[1]).and_then(|i| i.as_media_mut()) {
+        m.media = filmcraft_project::MediaRef::File { path: notes.to_string_lossy().into_owned() };
+        m.identity = None;
+    }
+    s.project = std::sync::Arc::new(p);
+    s.media.allow(&notes.to_string_lossy());
+    let r = s.execute("media.makeOffline", json!({"items": [items[1].0], "deleteFiles": true})).unwrap();
+    assert!(notes.exists(), "{r}");
+    assert!(r["kept"][0]["reason"].as_str().unwrap().contains("not a media file"), "{r}");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 #[cfg(unix)]
 #[test]
 fn relink_search_does_not_follow_directory_symlinks() {

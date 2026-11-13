@@ -401,8 +401,15 @@ fn make_offline(app: &mut FilmcraftApp, ctx: &egui::Context) {
         app.auto.add(&id, r, &l);
     }
     if ok {
-        if let Err(e) = app.session.execute("media.makeOffline", json!({"deleteFiles": delete})) {
-            app.ui.status = e.to_string();
+        match app.session.execute("media.makeOffline", json!({"deleteFiles": delete})) {
+            Ok(r) => {
+                // files that aren't the media they claim to be stay on disk (#2782)
+                if let Some(k) = r["kept"].as_array().and_then(|k| k.first()) {
+                    let (path, reason) = (k["path"].as_str().unwrap_or_default(), k["reason"].as_str().unwrap_or_default());
+                    app.ui.status = format!("{path} was not deleted: {reason}");
+                }
+            }
+            Err(e) => app.ui.status = e.to_string(),
         }
         keep = false;
     }

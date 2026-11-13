@@ -567,19 +567,38 @@ pub fn make_offline(s: &mut Session, p: &Value) -> Result<Value> {
         Ok(())
     })?;
     let mut deleted = Vec::new();
+    let mut kept = Vec::new();
     if delete {
-        for (_, path) in &files {
+        for (i, path) in &files {
             // Stored paths in an opened document are not authority to delete arbitrary files.
             // Delete only the resolved path that the media pool permits opening.
-            if let Ok(path) = s.media.follow(path)
-                && std::fs::remove_file(&path).is_ok()
-            {
-                deleted.push(path.clone());
+            let Ok(path) = s.media.follow(path) else { continue };
+            let Some(m) = s.project.item(*i).and_then(|it| it.as_media()) else { continue };
+            match deletable(s, m, &path) {
+                Ok(()) => match std::fs::remove_file(&path) {
+                    Ok(()) => deleted.push(path),
+                    Err(e) => kept.push(json!({"path": path, "reason": e.to_string()})),
+                },
+                Err(reason) => kept.push(json!({"path": path, "reason": reason})),
             }
         }
     }
     refresh(s);
-    Ok(json!({"offline": files.iter().map(|f| f.0.0).collect::<Vec<_>>(), "deleted": deleted}))
+    Ok(json!({"offline": files.iter().map(|f| f.0.0).collect::<Vec<_>>(), "deleted": deleted, "kept": kept}))
+}
+
+/// Whether Make Offline may delete `path` as the file of media item `m`: it must open as media,
+/// and be the file the item was imported from when the item recorded its identity. The path a
+/// project file or an automation request gives an item can name any file, so it is no authority
+/// to delete that file (#2782).
+fn deletable(s: &Session, m: &filmcraft_project::MediaClip, path: &str) -> std::result::Result<(), String> {
+    if let Some(want) = m.identity {
+        let have = identity_of(&*s.services, path).map_err(|e| e.to_string())?;
+        if have != want {
+            return Err("it is not the file this item was imported from".into());
+        }
+    }
+    s.media.probe_file(path, &*s.services).map(|_| ()).map_err(|_| "it is not a media file FilmCraft can read".to_string())
 }
 
 fn status_json(s: &Session, id: ItemId) -> Option<Value> {
